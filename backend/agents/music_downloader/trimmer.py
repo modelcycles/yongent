@@ -10,7 +10,7 @@ def make_60s_clip(input_path: Path, output_dir: Path, stem: str = "") -> Path:
     55-60초 구간에 페이드아웃 적용.
     stem이 주어지면 '{stem}(60s).mp3', 아니면 'audio_60s.mp3'로 저장.
     """
-    filename = f"{stem}(60s).mp3" if stem else "audio_60s.mp3"
+    filename = f"s{stem}.mp3" if stem else "saudio.mp3"
     output_path = output_dir / filename
 
     audio = (

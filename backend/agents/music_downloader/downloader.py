@@ -41,8 +41,40 @@ def _base_opts() -> dict:
     }
 
 
-def search_youtube(query: str) -> str | None:
-    """쿼리로 유튜브 URL 검색. 공식 채널 > VEVO > official audio 우선."""
+def _score_entry(entry: dict, artist: str, title: str) -> int:
+    """검색 결과 적합도 점수 계산. 높을수록 좋음."""
+    score = 0
+    vtitle = (entry.get("title") or "").lower()
+    channel = (entry.get("channel") or entry.get("uploader") or "").lower()
+    duration = entry.get("duration") or 0
+    a = artist.lower()
+    t = title.lower()
+
+    # 곡명·아티스트명 포함 여부
+    if t and t in vtitle:
+        score += 30
+    if a and a in vtitle:
+        score += 20
+    if a and a in channel:
+        score += 20
+
+    # 공식 채널 키워드
+    for kw in ("official", "vevo", "topic"):
+        if kw in channel:
+            score += 15
+            break
+
+    # 재생 시간: 2~7분 선호 (너무 짧거나 긴 건 앨범/라이브 등)
+    if 90 <= duration <= 420:
+        score += 10
+    elif duration > 420:
+        score -= 10
+
+    return score
+
+
+def search_youtube(query: str, artist: str = "", title: str = "") -> str | None:
+    """쿼리로 유튜브 URL 검색. 아티스트·곡명 매칭 점수가 가장 높은 결과 반환."""
     ydl_opts = {
         **_base_opts(),
         "quiet": True,
@@ -51,10 +83,12 @@ def search_youtube(query: str) -> str | None:
         "socket_timeout": 30,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        results = ydl.extract_info(f"ytsearch5:{query}", download=False)
-        if results and results.get("entries"):
-            return results["entries"][0]["webpage_url"]
-    return None
+        results = ydl.extract_info(f"ytsearch10:{query}", download=False)
+        entries = (results or {}).get("entries") or []
+        if not entries:
+            return None
+        best = max(entries, key=lambda e: _score_entry(e, artist, title))
+        return best["webpage_url"]
 
 
 def download_audio(url: str, output_dir: Path) -> tuple[Path, dict]:

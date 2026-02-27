@@ -33,39 +33,49 @@ def _run_pipeline(
     try:
         artist, title = _parse_query(query) if query else ("", "")
 
-        # 1. URL 확보
+        # 1. 멜론 메타데이터 먼저 수집 (정확한 곡명·아티스트명 확보)
+        jobs[job_id]["step"] = "멜론 메타데이터 수집 중"
+        meta_early = merge_metadata({}, artist=artist, title=title)
+        search_artist = meta_early.get("artist") or artist
+        search_title  = meta_early.get("title")  or title
+
+        # 2. URL 확보 (멜론에서 얻은 정확한 곡명으로 검색)
         jobs[job_id]["step"] = "유튜브 검색 중"
         if not url:
-            url = search_youtube(f"{artist} {title} official audio")
+            url = search_youtube(
+                f"{search_artist} {search_title}",
+                artist=search_artist,
+                title=search_title,
+            )
         if not url:
             raise ValueError("유튜브 검색 결과 없음")
 
-        # 2. 음원 다운로드 (파일명 확정 전 임시 디렉터리)
+        # 3. 음원 다운로드 (파일명 확정 전 임시 디렉터리)
         jobs[job_id]["step"] = "음원 다운로드 중"
         tmp_dir = (DEFAULT_DOWNLOAD_DIR / f"_tmp_{job_id}")
         tmp_dir.mkdir(parents=True, exist_ok=True)
         mp3_path, yt_info = download_audio(url, tmp_dir)
 
-        # 3. 메타데이터 병합 (멜론 + MusicBrainz)
-        jobs[job_id]["step"] = "메타데이터 수집 중 (멜론, MusicBrainz)"
-        meta = merge_metadata(yt_info, artist=artist, title=title)
+        # 4. yt-dlp 정보로 메타데이터 보완 (이미 수집된 멜론 데이터에 youtube_url 등 병합)
+        jobs[job_id]["step"] = "메타데이터 병합 중"
+        meta = merge_metadata(yt_info, artist=search_artist, title=search_title)
 
-        # 4. 최종 폴더: {output_dir}/아티스트명-곡명/
+        # 5. 최종 폴더: {output_dir}/아티스트명-곡명/
         stem = f"{_safe_filename(meta['artist'])}-{_safe_filename(meta['title'])}"
         base = Path(output_dir) if output_dir else DEFAULT_DOWNLOAD_DIR
         song_dir = base / stem
         song_dir.mkdir(parents=True, exist_ok=True)
 
-        # 5. 파일 이동 + 이름 변경
+        # 6. 파일 이동 + 이름 변경
         final_mp3 = song_dir / f"{stem}.mp3"
         mp3_path.replace(final_mp3)
         tmp_dir.rmdir() if not any(tmp_dir.iterdir()) else None
 
-        # 6. 60초 클립 (55-60초 페이드아웃)
+        # 7. 60초 클립 (55-60초 페이드아웃)
         jobs[job_id]["step"] = "60초 클립 생성 중"
         make_60s_clip(final_mp3, song_dir, stem=stem)
 
-        # 7. 메타데이터 MD 저장
+        # 8. 메타데이터 MD 저장
         jobs[job_id]["step"] = "메타데이터 저장 중"
         write_info_md(meta, song_dir)
 

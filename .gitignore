@@ -64,3 +64,4 @@ downloads/
 # Misc
 *.tmp
 *.temp
+backend/agents/music_downloader/cookies.txt

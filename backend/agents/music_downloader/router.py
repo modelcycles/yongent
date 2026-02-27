@@ -2,9 +2,9 @@ import asyncio
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Request, UploadFile
 
-from .downloader import search_youtube, download_audio
+from .downloader import search_youtube, download_audio, COOKIES_FILE
 from .exporter import write_info_md, _safe_filename
 from .metadata import merge_metadata
 from .trimmer import make_60s_clip
@@ -90,6 +90,33 @@ def _run_pipeline(
         jobs[job_id]["status"] = "error"
         jobs[job_id]["step"] = "오류"
         jobs[job_id]["error"] = str(e)
+
+
+@router.get("/cookies/status")
+async def cookies_status():
+    """cookies.txt 존재 여부 + 실제 저장 경로 반환."""
+    return {"active": COOKIES_FILE.exists(), "path": str(COOKIES_FILE.resolve())}
+
+
+@router.post("/cookies")
+async def upload_cookies(file: UploadFile = File(...)):
+    """사용자가 내보낸 cookies.txt 업로드."""
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="빈 파일입니다.")
+    try:
+        COOKIES_FILE.write_bytes(content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"파일 저장 실패: {e}")
+    return {"ok": True, "path": str(COOKIES_FILE.resolve()), "size": len(content)}
+
+
+@router.delete("/cookies")
+async def delete_cookies():
+    """cookies.txt 삭제."""
+    if COOKIES_FILE.exists():
+        COOKIES_FILE.unlink()
+    return {"ok": True}
 
 
 @router.get("/pick-folder")

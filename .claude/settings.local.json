@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(taskkill:*)",
-      "Bash(netstat:*)"
+      "Bash(netstat:*)",
+      "Bash(curl:*)"
     ]
   }
 }

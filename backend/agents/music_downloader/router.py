@@ -1,18 +1,37 @@
+"""Music Downloader v2 — FastAPI 라우터."""
+from __future__ import annotations
+
 import asyncio
+import logging
+import re
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 
-from .downloader import search_youtube, download_audio, COOKIES_FILE
-from .exporter import write_info_md, _safe_filename
-from .metadata import merge_metadata
-from .trimmer import make_60s_clip
+from .downloader import COOKIES_FILE, _safe_filename, download_audio, search_youtube
+from .metadata import collect_all_metadata
+from .schemas import DownloadRequest, JobStatusResponse, SearchRequest, SearchResponse
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["music-downloader"])
 
-DEFAULT_DOWNLOAD_DIR = Path(__file__).parent.parent.parent / "downloads"
+_TEMP_DIR = Path(__file__).parent / "_downloads"
+
+# 인메모리 Job 저장소
 jobs: dict[str, dict] = {}
+
+
+# ─── 유틸 ────────────────────────────────────────────────────────────────────
+
+
+def _youtube_thumbnail(url: str) -> str:
+    """YouTube URL → maxresdefault 썸네일 URL."""
+    m = re.search(r"(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})", url)
+    if m:
+        return f"https://img.youtube.com/vi/{m.group(1)}/maxresdefault.jpg"
+    return ""
 
 
 def _parse_query(query: str) -> tuple[str, str]:
@@ -23,97 +42,151 @@ def _parse_query(query: str) -> tuple[str, str]:
     return "", query.strip()
 
 
-def _run_pipeline(
-    job_id: str,
-    url: str | None,
-    query: str | None,
-    output_dir: str | None,
-):
+# ─── 백그라운드 다운로드 작업 ────────────────────────────────────────────────
+
+
+def _run_download_job(job_id: str, url: str | None, query: str | None) -> None:
+    """BackgroundTasks로 실행되는 동기 다운로드 파이프라인."""
     jobs[job_id]["status"] = "running"
     try:
         artist, title = _parse_query(query) if query else ("", "")
 
-        # 1. 멜론 메타데이터 먼저 수집 (정확한 곡명·아티스트명 확보)
-        jobs[job_id]["step"] = "멜론 메타데이터 수집 중"
-        meta_early = merge_metadata({}, artist=artist, title=title)
-        search_artist = meta_early.get("artist") or artist
-        search_title  = meta_early.get("title")  or title
-
-        # 2. URL 확보 (멜론에서 얻은 정확한 곡명으로 검색)
-        jobs[job_id]["step"] = "유튜브 검색 중"
+        # URL 없으면 YouTube 검색
         if not url:
-            url = search_youtube(
-                f"{search_artist} {search_title}",
-                artist=search_artist,
-                title=search_title,
-            )
-        if not url:
-            raise ValueError("유튜브 검색 결과 없음")
+            jobs[job_id]["step"] = "유튜브 검색 중"
+            search_q = f"{artist} {title} official audio" if artist else query or ""
+            url = search_youtube(search_q, artist=artist, title=title)
+            if not url:
+                raise ValueError("유튜브 검색 결과를 찾을 수 없습니다")
 
-        # 3. 음원 다운로드 (파일명 확정 전 임시 디렉터리)
+        # MP3 다운로드
         jobs[job_id]["step"] = "음원 다운로드 중"
-        tmp_dir = (DEFAULT_DOWNLOAD_DIR / f"_tmp_{job_id}")
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-        mp3_path, yt_info = download_audio(url, tmp_dir)
+        output_dir = _TEMP_DIR / job_id
+        mp3_path = download_audio(url, output_dir)
 
-        # 4. yt-dlp 정보로 메타데이터 보완 (이미 수집된 멜론 데이터에 youtube_url 등 병합)
-        jobs[job_id]["step"] = "메타데이터 병합 중"
-        meta = merge_metadata(yt_info, artist=search_artist, title=search_title)
+        # 파일명: artist-title.mp3 또는 audio.mp3
+        if artist and title:
+            filename = f"{_safe_filename(artist)}-{_safe_filename(title)}.mp3"
+        else:
+            filename = "audio.mp3"
 
-        # 5. 최종 폴더: {output_dir}/아티스트명-곡명/
-        stem = f"{_safe_filename(meta['artist'])}-{_safe_filename(meta['title'])}"
-        base = Path(output_dir) if output_dir else DEFAULT_DOWNLOAD_DIR
-        song_dir = base / stem
-        song_dir.mkdir(parents=True, exist_ok=True)
+        jobs[job_id].update(
+            status="done",
+            step="완료",
+            file_path=str(mp3_path),
+            filename=filename,
+            download_url=f"/music-downloader/file/{job_id}",
+        )
 
-        # 6. 파일 이동 + 이름 변경
-        final_mp3 = song_dir / f"{stem}.mp3"
-        mp3_path.replace(final_mp3)
-        tmp_dir.rmdir() if not any(tmp_dir.iterdir()) else None
-
-        # 7. 60초 클립 (55-60초 페이드아웃)
-        jobs[job_id]["step"] = "60초 클립 생성 중"
-        make_60s_clip(final_mp3, song_dir, stem=stem)
-
-        # 8. 메타데이터 MD 저장
-        jobs[job_id]["step"] = "메타데이터 저장 중"
-        write_info_md(meta, song_dir)
-
-        jobs[job_id]["status"] = "done"
-        jobs[job_id]["step"] = "완료"
-        jobs[job_id]["result"] = {
-            "title": meta["title"],
-            "artist": meta["artist"],
-            "album": meta["album"],
-            "year": meta["year"],
-            "composer": meta["composer"],
-            "lyricist": meta["lyricist"],
-            "youtube_url": meta["youtube_url"],
-            "song_dir": str(song_dir),
-            "files": {
-                "audio": f"{stem}.mp3",
-                "clip": f"{stem}(60s).mp3",
-                "meta": f"{stem}(Meta).md",
-            },
-        }
     except Exception as e:
-        jobs[job_id]["status"] = "error"
-        jobs[job_id]["step"] = "오류"
-        jobs[job_id]["error"] = str(e)
+        logger.exception("[Download] 작업 실패 job_id=%s", job_id)
+        jobs[job_id].update(status="error", step="오류", error=str(e))
+
+
+# ─── 엔드포인트 ──────────────────────────────────────────────────────────────
+
+
+@router.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+@router.post("/search", response_model=SearchResponse)
+async def search(req: SearchRequest):
+    """메타데이터 수집 (다운로드 없음). 보통 2~5초 소요."""
+    artist, title = _parse_query(req.query)
+    if not title:
+        raise HTTPException(status_code=422, detail="곡명을 입력해주세요 (예: 아이유 - 좋은날)")
+
+    # 메타데이터 수집 (async)
+    meta = await collect_all_metadata(artist, title)
+
+    # YouTube 검색 — blocking 이므로 thread pool에서 실행
+    search_q = f"{meta['artist']} {meta['title']} official audio"
+    youtube_url = await asyncio.to_thread(
+        lambda: search_youtube(search_q, artist=meta["artist"], title=meta["title"])
+    ) or ""
+
+    # 커버 아트 폴백: CAA/Deezer 모두 실패 시 YouTube 썸네일 사용
+    cover_url = meta["cover_url"] or (
+        _youtube_thumbnail(youtube_url) if youtube_url else ""
+    )
+
+    return SearchResponse(
+        artist=meta["artist"],
+        title=meta["title"],
+        album=meta["album"],
+        release_date=meta["release_date"],
+        cover_url=cover_url,
+        lyrics=meta["lyrics"],
+        composer=meta["composer"],
+        lyricist=meta["lyricist"],
+        youtube_url=youtube_url,
+    )
+
+
+@router.post("/download", response_model=JobStatusResponse)
+async def download(req: DownloadRequest, background_tasks: BackgroundTasks):
+    """비동기 다운로드 Job 생성. job_id로 상태 폴링."""
+    if not req.query and not req.url:
+        raise HTTPException(status_code=422, detail="query 또는 url 중 하나는 필수입니다")
+
+    job_id = str(uuid.uuid4())[:8]
+    jobs[job_id] = {"status": "queued", "step": "대기 중"}
+    background_tasks.add_task(_run_download_job, job_id, req.url, req.query)
+    return JobStatusResponse(job_id=job_id, status="queued", step="대기 중")
+
+
+@router.get("/status/{job_id}", response_model=JobStatusResponse)
+async def get_status(job_id: str):
+    """Job 상태 폴링."""
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job_id를 찾을 수 없습니다")
+    return JobStatusResponse(
+        job_id=job_id,
+        status=job["status"],
+        step=job.get("step"),
+        download_url=job.get("download_url"),
+        error=job.get("error"),
+    )
+
+
+@router.get("/file/{job_id}")
+async def get_file(job_id: str):
+    """완료된 Job의 MP3 파일을 FileResponse로 서빙."""
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job_id를 찾을 수 없습니다")
+    if job["status"] != "done":
+        raise HTTPException(status_code=409, detail=f"아직 완료되지 않았습니다: {job['status']}")
+
+    file_path = Path(job.get("file_path", ""))
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다")
+
+    filename = job.get("filename", "audio.mp3")
+    return FileResponse(
+        path=str(file_path),
+        media_type="audio/mpeg",
+        filename=filename,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ─── 쿠키 관리 ───────────────────────────────────────────────────────────────
 
 
 @router.get("/cookies/status")
 async def cookies_status():
-    """cookies.txt 존재 여부 + 실제 저장 경로 반환."""
     return {"active": COOKIES_FILE.exists(), "path": str(COOKIES_FILE.resolve())}
 
 
 @router.post("/cookies")
 async def upload_cookies(file: UploadFile = File(...)):
-    """사용자가 내보낸 cookies.txt 업로드."""
     content = await file.read()
     if not content:
-        raise HTTPException(status_code=400, detail="빈 파일입니다.")
+        raise HTTPException(status_code=400, detail="빈 파일입니다")
     try:
         COOKIES_FILE.write_bytes(content)
     except Exception as e:
@@ -123,53 +196,6 @@ async def upload_cookies(file: UploadFile = File(...)):
 
 @router.delete("/cookies")
 async def delete_cookies():
-    """cookies.txt 삭제."""
     if COOKIES_FILE.exists():
         COOKIES_FILE.unlink()
     return {"ok": True}
-
-
-@router.get("/pick-folder")
-async def pick_folder():
-    """네이티브 폴더 선택 다이얼로그를 열고 선택된 경로를 반환."""
-    def _open_dialog() -> str | None:
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.wm_attributes("-topmost", True)
-        path = filedialog.askdirectory(title="저장 폴더 선택")
-        root.destroy()
-        return path or None
-
-    loop = asyncio.get_event_loop()
-    path = await loop.run_in_executor(None, _open_dialog)
-    return {"path": path}
-
-
-@router.post("/download")
-async def download(request: Request, background_tasks: BackgroundTasks):
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-
-    query = body.get("query") or request.query_params.get("q")
-    url = body.get("url") or request.query_params.get("u")
-    output_dir = body.get("output_dir")
-
-    if not query and not url:
-        raise HTTPException(status_code=422, detail="query 또는 url 중 하나는 필수")
-
-    job_id = str(uuid.uuid4())[:8]
-    jobs[job_id] = {"status": "queued", "step": "대기 중"}
-    background_tasks.add_task(_run_pipeline, job_id, url, query, output_dir)
-    return {"job_id": job_id, "status": "queued"}
-
-
-@router.get("/status/{job_id}")
-async def get_status(job_id: str):
-    job = jobs.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="job_id를 찾을 수 없음")
-    return {"job_id": job_id, **job}

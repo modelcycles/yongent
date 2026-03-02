@@ -55,6 +55,7 @@ projects/eartraining_generator
 
 # Downloads / output (music downloader)
 downloads/
+backend/agents/music_downloader/_downloads/
 *.mp3
 *.m4a
 *.flac
@@ -65,3 +66,9 @@ downloads/
 *.tmp
 *.temp
 backend/agents/music_downloader/cookies.txt
+
+# Local Claude settings
+.claude/settings.local.json
+
+# Archive / temp folders
+claudemd arcive/

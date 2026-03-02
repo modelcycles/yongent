@@ -4,5 +4,6 @@ python-multipart==0.0.9
 python-dotenv
 httpx
 yt-dlp
+ffmpeg-python
 beautifulsoup4
 lxml

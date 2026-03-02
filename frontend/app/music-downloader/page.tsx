@@ -31,10 +31,21 @@ interface DownloadSectionProps {
   status: DownloadStatus;
   step: string;
   error: string;
+  savePath: string;
+  setSavePath: (v: string) => void;
   onDownload: () => void;
+  onSampleDownload: (() => void) | null;
 }
 
-function DownloadSection({ status, step, error, onDownload }: DownloadSectionProps) {
+function DownloadSection({
+  status,
+  step,
+  error,
+  savePath,
+  setSavePath,
+  onDownload,
+  onSampleDownload,
+}: DownloadSectionProps) {
   if (status === "queued" || status === "running") {
     return (
       <div className="flex items-center gap-3 text-sm text-gray-300">
@@ -45,14 +56,24 @@ function DownloadSection({ status, step, error, onDownload }: DownloadSectionPro
   }
   if (status === "done") {
     return (
-      <div className="flex items-center gap-4">
+      <div className="space-y-2">
         <span className="text-sm text-green-400">다운로드 완료</span>
-        <button
-          onClick={onDownload}
-          className="rounded-lg bg-gray-800 hover:bg-gray-700 px-4 py-2 text-sm font-medium transition-colors"
-        >
-          다시 다운로드
-        </button>
+        <div className="flex gap-2 flex-wrap">
+          <button
+            onClick={onDownload}
+            className="rounded-lg bg-gray-800 hover:bg-gray-700 px-4 py-2 text-sm font-medium transition-colors"
+          >
+            원본 다시 받기
+          </button>
+          {onSampleDownload && (
+            <button
+              onClick={onSampleDownload}
+              className="rounded-lg bg-gray-800 hover:bg-gray-700 px-4 py-2 text-sm font-medium transition-colors"
+            >
+              60초 샘플 다시 받기
+            </button>
+          )}
+        </div>
       </div>
     );
   }
@@ -70,12 +91,24 @@ function DownloadSection({ status, step, error, onDownload }: DownloadSectionPro
     );
   }
   return (
-    <button
-      onClick={onDownload}
-      className="w-full rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2.5 text-sm font-semibold transition-colors"
-    >
-      ⬇ MP3 다운로드
-    </button>
+    <div className="space-y-3">
+      <div>
+        <label className="text-xs text-gray-500 block mb-1">저장 폴더 경로</label>
+        <input
+          type="text"
+          placeholder="예: /Users/이름/Music  (비워두면 브라우저 다운로드만)"
+          value={savePath}
+          onChange={(e) => setSavePath(e.target.value)}
+          className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:border-gray-500 font-mono"
+        />
+      </div>
+      <button
+        onClick={onDownload}
+        className="w-full rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2.5 text-sm font-semibold transition-colors"
+      >
+        ⬇ 원본 + 60초 샘플 다운로드
+      </button>
+    </div>
   );
 }
 
@@ -107,6 +140,8 @@ export default function MusicDownloaderPage() {
   const [downloadStep, setDownloadStep] = useState("");
   const [downloadError, setDownloadError] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
+  const [savePath, setSavePath] = useState("");
+  const [sampleDownloadUrl, setSampleDownloadUrl] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const searchResultRef = useRef<SearchResult | null>(null);
 
@@ -165,7 +200,11 @@ export default function MusicDownloaderPage() {
         if (data.status === "done") {
           clearInterval(pollRef.current!);
           setDownloadStatus("done");
-          triggerBrowserDownload(`${API}${data.download_url}`);
+          setSampleDownloadUrl(data.sample_download_url || null);
+          triggerBrowserDownload(`${API}${data.download_url}`, false);
+          if (data.sample_download_url) {
+            setTimeout(() => triggerBrowserDownload(`${API}${data.sample_download_url}`, true), 1000);
+          }
         } else if (data.status === "error") {
           clearInterval(pollRef.current!);
           setDownloadStatus("error");
@@ -183,7 +222,7 @@ export default function MusicDownloaderPage() {
     };
   }, [jobId, downloadStatus]);
 
-  async function triggerBrowserDownload(url: string) {
+  async function triggerBrowserDownload(url: string, isSample: boolean) {
     try {
       const res = await fetch(url);
       const blob = await res.blob();
@@ -191,7 +230,13 @@ export default function MusicDownloaderPage() {
       const a = document.createElement("a");
       a.href = objUrl;
       const result = searchResultRef.current;
-      a.download = result ? `${result.artist} - ${result.title}.mp3` : "audio.mp3";
+      if (result) {
+        const artist = result.artist.replace(/\s/g, "");
+        const title = result.title.replace(/\s/g, "");
+        a.download = isSample ? `${artist}-${title}_sample.mp3` : `${artist}-${title}.mp3`;
+      } else {
+        a.download = isSample ? "audio_sample.mp3" : "audio.mp3";
+      }
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -243,6 +288,7 @@ export default function MusicDownloaderPage() {
     setSearchResult(null);
     setSearchError("");
     setDownloadStatus("idle");
+    setSampleDownloadUrl(null);
     setLyricsOpen(false);
 
     // URL 직접 입력
@@ -280,7 +326,8 @@ export default function MusicDownloaderPage() {
     try {
       const q = query.trim();
       const isUrl = q.startsWith("http");
-      const body = isUrl ? { url: q } : { query: q };
+      const saveDir = savePath.trim() || null;
+      const body = isUrl ? { url: q, save_dir: saveDir } : { query: q, save_dir: saveDir };
 
       const res = await fetch(`${API}/music-downloader/download`, {
         method: "POST",
@@ -510,7 +557,14 @@ export default function MusicDownloaderPage() {
                 status={downloadStatus}
                 step={downloadStep}
                 error={downloadError}
+                savePath={savePath}
+                setSavePath={setSavePath}
                 onDownload={handleDownload}
+                onSampleDownload={
+                  sampleDownloadUrl
+                    ? () => triggerBrowserDownload(`${API}${sampleDownloadUrl}`, true)
+                    : null
+                }
               />
             </div>
           )}
@@ -654,7 +708,14 @@ export default function MusicDownloaderPage() {
                   status={downloadStatus}
                   step={downloadStep}
                   error={downloadError}
+                  savePath={savePath}
+                  setSavePath={setSavePath}
                   onDownload={handleDownload}
+                  onSampleDownload={
+                    sampleDownloadUrl
+                      ? () => triggerBrowserDownload(`${API}${sampleDownloadUrl}`, true)
+                      : null
+                  }
                 />
               </div>
             </>

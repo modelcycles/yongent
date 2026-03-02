@@ -16,7 +16,7 @@ COOKIES_FILE = Path(__file__).parent / "cookies.txt"
 def _safe_filename(name: str) -> str:
     """파일명에 사용할 수 없는 특수문자·공백을 안전하게 처리."""
     name = re.sub(r'[\\/*?:"<>|]', "", name)
-    name = name.replace(" ", "_")
+    name = name.replace(" ", "")
     return name.strip("._") or "audio"
 
 

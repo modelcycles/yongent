@@ -20,6 +20,7 @@ class SearchResponse(BaseModel):
 class DownloadRequest(BaseModel):
     query: str | None = None
     url: str | None = None
+    save_dir: str | None = None  # 로컬 저장 경로 (선택)
 
 
 class JobStatusResponse(BaseModel):
@@ -27,4 +28,5 @@ class JobStatusResponse(BaseModel):
     status: str  # queued | running | done | error
     step: str | None = None
     download_url: str | None = None
+    sample_download_url: str | None = None  # 60초 샘플 다운로드 URL
     error: str | None = None

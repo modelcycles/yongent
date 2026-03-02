@@ -189,12 +189,7 @@ async def get_file(job_id: str):
         raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다")
 
     filename = job.get("filename", "audio.mp3")
-    return FileResponse(
-        path=str(file_path),
-        media_type="audio/mpeg",
-        filename=filename,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    return FileResponse(path=str(file_path), media_type="audio/mpeg", filename=filename)
 
 
 @router.get("/file/{job_id}/sample")
@@ -211,12 +206,7 @@ async def get_sample_file(job_id: str):
         raise HTTPException(status_code=404, detail="샘플 파일을 찾을 수 없습니다")
 
     filename = job.get("sample_filename", "audio_sample.mp3")
-    return FileResponse(
-        path=str(sample_path),
-        media_type="audio/mpeg",
-        filename=filename,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    return FileResponse(path=str(sample_path), media_type="audio/mpeg", filename=filename)
 
 
 # ─── 쿠키 관리 ───────────────────────────────────────────────────────────────

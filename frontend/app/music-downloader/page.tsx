@@ -95,6 +95,12 @@ export default function MusicDownloaderPage() {
   const [lyricsOpen, setLyricsOpen] = useState(false);
   const [copied1, setCopied1] = useState(false);
   const [copied2, setCopied2] = useState(false);
+  const [copiedArtist, setCopiedArtist] = useState(false);
+  const [copiedTitle, setCopiedTitle] = useState(false);
+  const [copiedAlbum, setCopiedAlbum] = useState(false);
+  const [copiedLyrics, setCopiedLyrics] = useState(false);
+  const [copiedComposer, setCopiedComposer] = useState(false);
+  const [copiedLyricist, setCopiedLyricist] = useState(false);
 
   // 다운로드
   const [downloadStatus, setDownloadStatus] = useState<DownloadStatus>("idle");
@@ -585,15 +591,54 @@ export default function MusicDownloaderPage() {
 
               <div className="border-t border-gray-800" />
 
+              {/* 메타데이터 복사 */}
+              <div className="px-5 py-3">
+                <p className="text-xs text-gray-500 mb-2">🏷 메타데이터</p>
+                <div className="space-y-1.5">
+                  {(
+                    [
+                      { label: "아티스트명", value: searchResult.artist, copied: copiedArtist, setCopied: setCopiedArtist },
+                      { label: "곡명", value: searchResult.title, copied: copiedTitle, setCopied: setCopiedTitle },
+                      { label: "앨범명", value: searchResult.album, copied: copiedAlbum, setCopied: setCopiedAlbum },
+                      { label: "작곡가", value: searchResult.composer, copied: copiedComposer, setCopied: setCopiedComposer },
+                      { label: "작사가", value: searchResult.lyricist, copied: copiedLyricist, setCopied: setCopiedLyricist },
+                    ] as { label: string; value: string; copied: boolean; setCopied: (v: boolean) => void }[]
+                  ).map(({ label, value, copied, setCopied }) => (
+                    <div key={label} className="flex items-center gap-3 py-0.5">
+                      <span className="text-xs text-gray-600 w-16 shrink-0">{label}</span>
+                      <span className="text-sm text-gray-300 flex-1 truncate min-w-0">{value || "—"}</span>
+                      <button
+                        onClick={() => value && copyText(value, setCopied)}
+                        disabled={!value}
+                        className="shrink-0 rounded bg-gray-800 hover:bg-gray-700 disabled:opacity-40 px-2.5 py-1 text-xs font-medium transition-colors min-w-[52px] text-center"
+                      >
+                        {copied ? "복사됨 ✓" : "복사"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="border-t border-gray-800" />
+
               {/* 가사 */}
               <div className="px-5 py-3">
-                <button
-                  onClick={() => setLyricsOpen((v) => !v)}
-                  className="flex items-center justify-between w-full text-left"
-                >
-                  <span className="text-sm text-gray-400">🎵 가사</span>
-                  <span className="text-xs text-gray-500">{lyricsOpen ? "접기 ▲" : "펼치기 ▼"}</span>
-                </button>
+                <div className="flex items-center justify-between w-full">
+                  <button
+                    onClick={() => setLyricsOpen((v) => !v)}
+                    className="flex items-center gap-2 text-left"
+                  >
+                    <span className="text-sm text-gray-400">🎵 가사</span>
+                    <span className="text-xs text-gray-500">{lyricsOpen ? "접기 ▲" : "펼치기 ▼"}</span>
+                  </button>
+                  <button
+                    onClick={() => searchResult.lyrics && copyText(searchResult.lyrics, setCopiedLyrics)}
+                    disabled={!searchResult.lyrics}
+                    className="shrink-0 rounded bg-gray-800 hover:bg-gray-700 disabled:opacity-40 px-2.5 py-1 text-xs font-medium transition-colors min-w-[52px] text-center"
+                  >
+                    {copiedLyrics ? "복사됨 ✓" : "복사"}
+                  </button>
+                </div>
                 {lyricsOpen && (
                   <div className="mt-3 max-h-64 overflow-y-auto pr-1 text-sm text-gray-300 whitespace-pre-line leading-relaxed">
                     {searchResult.lyrics}

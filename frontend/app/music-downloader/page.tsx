@@ -233,7 +233,7 @@ export default function MusicDownloaderPage() {
       if (result) {
         const artist = result.artist.replace(/\s/g, "");
         const title = result.title.replace(/\s/g, "");
-        a.download = isSample ? `${artist}-${title}_sample.mp3` : `${artist}-${title}.mp3`;
+        a.download = isSample ? `s${artist}-${title}.mp3` : `${artist}-${title}.mp3`;
       } else {
         a.download = isSample ? "audio_sample.mp3" : "audio.mp3";
       }
@@ -601,9 +601,9 @@ export default function MusicDownloaderPage() {
               {/* 복사 1 */}
               <div className="flex items-center justify-between px-5 py-3 gap-4">
                 <div className="min-w-0">
-                  <p className="text-xs text-gray-500 mb-0.5">📋 복사 1</p>
+                  <p className="text-xs text-gray-500 mb-0.5">📋 곡 정보</p>
                   <p className="text-sm text-gray-300 truncate">
-                    {searchResult.artist}의 &apos;{searchResult.title}&apos; (
+                    {searchResult.artist}의 &apos;{searchResult.album}&apos; (
                     {formatDateShort(searchResult.release_date)}) 수록곡
                   </p>
                 </div>
@@ -625,7 +625,7 @@ export default function MusicDownloaderPage() {
               {/* 복사 2 */}
               <div className="flex items-start justify-between px-5 py-3 gap-4">
                 <div className="min-w-0">
-                  <p className="text-xs text-gray-500 mb-0.5">📋 복사 2</p>
+                  <p className="text-xs text-gray-500 mb-0.5">📋 제작 정보</p>
                   <p className="text-sm text-gray-300 whitespace-pre-line leading-relaxed">
                     {`${searchResult.lyricist} 작사\n${searchResult.composer} 작곡\n${searchResult.artist} 노래`}
                   </p>
@@ -652,10 +652,10 @@ export default function MusicDownloaderPage() {
                   {(
                     [
                       { label: "아티스트명", value: searchResult.artist, copied: copiedArtist, setCopied: setCopiedArtist },
-                      { label: "곡명", value: searchResult.title, copied: copiedTitle, setCopied: setCopiedTitle },
                       { label: "앨범명", value: searchResult.album, copied: copiedAlbum, setCopied: setCopiedAlbum },
-                      { label: "작곡가", value: searchResult.composer, copied: copiedComposer, setCopied: setCopiedComposer },
+                      { label: "곡명", value: searchResult.title, copied: copiedTitle, setCopied: setCopiedTitle },
                       { label: "작사가", value: searchResult.lyricist, copied: copiedLyricist, setCopied: setCopiedLyricist },
+                      { label: "작곡가", value: searchResult.composer, copied: copiedComposer, setCopied: setCopiedComposer },
                     ] as { label: string; value: string; copied: boolean; setCopied: (v: boolean) => void }[]
                   ).map(({ label, value, copied, setCopied }) => (
                     <div key={label} className="flex items-center gap-3 py-0.5">

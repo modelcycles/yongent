@@ -15,6 +15,7 @@ You are an expert audio mastering and packaging automation engineer specializing
 4. Parse artist and title from filename
 5. Write ID3v1 and ID3v2 tags automatically
 6. Output processed files to a designated output directory
+7. Create a 60-second sample MP3 for each file (with fade-out at 55-60s)
 
 ---
 
@@ -93,26 +94,100 @@ ffmpeg -i "{input.wav}" \
 # Then apply: -af "volume={peak_correction}dB"
 ```
 
-### Step 2: ID3 Tag Writing
+### Step 2: 60초 샘플 생성
 
-After conversion, write/overwrite ID3 tags using `mutagen` (Python) or `eyeD3`:
+메인 MP3 변환 완료 후, 동일 소스(WAV 또는 변환된 MP3)에서 60초 샘플을 생성한다:
+
+```bash
+ffmpeg -i "{output.mp3}" -ss 0 -t 60 \
+  -af "afade=t=out:st=55:d=5" \
+  -acodec libmp3lame -b:a 192k \
+  "s{아티스트}-{제목}.mp3"
+```
+
+- 구간: 0초 ~ 60초
+- 페이드아웃: 55초~60초 (5초)
+- 비트레이트: 192kbps
+- 출력 파일명: `s{아티스트}-{제목}.mp3` (메인 파일과 같은 `output_dir`에 저장)
+- 샘플에도 동일한 ID3 태그 적용
+
+Python ffmpeg-python 사용 시:
+
+```python
+def make_60s_sample(input_path: str, output_path: str) -> None:
+    audio = (
+        ffmpeg
+        .input(input_path, ss=0, t=60)
+        .audio
+        .filter("afade", t="out", st=55, d=5)
+    )
+    (
+        ffmpeg
+        .output(audio, output_path, acodec="libmp3lame", audio_bitrate="192k")
+        .overwrite_output()
+        .run(quiet=True)
+    )
+```
+
+---
+
+### Step 3: ID3 Tag Writing
+
+After conversion, write/overwrite ID3 tags using `mutagen` (Python).
+
+**중요: ID3v1 한글 인코딩 문제**
+ID3v1은 Latin-1만 공식 지원하므로 mutagen의 `v1=1` 옵션으로 저장하면 한글이 "???"로 깨진다.
+한국 미디어 플레이어들은 ID3v1에서 CP949(EUC-KR) 인코딩을 기대하므로, ID3v1 태그는 반드시 수동으로 CP949 인코딩하여 직접 파일에 기록해야 한다.
 
 ```python
 from mutagen.id3 import ID3, TIT2, TPE1, TCOP, WXXX, ID3NoHeaderError
-from mutagen.mp3 import MP3
 
-def write_tags(filepath, artist, title, copyright_text, url):
+def write_id3v1_cp949(filepath: str, title: str, artist: str, comment: str = "") -> None:
+    """ID3v1 태그를 CP949(EUC-KR)로 직접 기록 (한글 깨짐 방지)."""
+    def encode_field(text: str, length: int) -> bytes:
+        try:
+            encoded = text.encode('cp949')
+        except UnicodeEncodeError:
+            encoded = text.encode('cp949', errors='replace')
+        return encoded[:length].ljust(length, b'\x00')
+
+    tag = b'TAG'
+    tag += encode_field(title, 30)    # 제목 30바이트
+    tag += encode_field(artist, 30)   # 아티스트 30바이트
+    tag += encode_field('', 30)       # 앨범 30바이트 (비움)
+    tag += encode_field('', 4)        # 연도 4바이트 (비움)
+    tag += encode_field(comment, 28)  # 코멘트 28바이트 (ID3v1.1)
+    tag += b'\x00'                    # ID3v1.1 구분자
+    tag += b'\x00'                    # 트랙 번호 (미설정)
+    tag += b'\xff'                    # 장르 (255 = 미설정)
+
+    assert len(tag) == 128, f"ID3v1 tag must be 128 bytes, got {len(tag)}"
+
+    with open(filepath, 'r+b') as f:
+        f.seek(-128, 2)
+        if f.read(3) == b'TAG':
+            f.seek(-128, 2)   # 기존 ID3v1 덮어쓰기
+        else:
+            f.seek(0, 2)      # 파일 끝에 추가
+        f.write(tag)
+
+
+def write_tags(filepath: str, artist: str, title: str, copyright_text: str, url: str) -> None:
+    # ID3v2 태그: UTF-8 (encoding=3) 사용, v1은 mutagen으로 쓰지 않음
     try:
         tags = ID3(filepath)
     except ID3NoHeaderError:
         tags = ID3()
 
-    tags['TIT2'] = TIT2(encoding=3, text=title)           # 제목
-    tags['TPE1'] = TPE1(encoding=3, text=artist)           # 아티스트
-    tags['TCOP'] = TCOP(encoding=3, text=copyright_text)   # 저작권: 미디어라운드(주)
-    tags['WXXX:URL'] = WXXX(encoding=3, url=url, desc='URL')  # URL: www.akbobada.com
+    tags['TIT2'] = TIT2(encoding=3, text=title)
+    tags['TPE1'] = TPE1(encoding=3, text=artist)
+    tags['TCOP'] = TCOP(encoding=3, text=copyright_text)
+    tags['WXXX:URL'] = WXXX(encoding=3, url=url, desc='URL')
 
-    tags.save(filepath, v1=1, v2_version=3)  # v1=1: always write ID3v1
+    tags.save(filepath, v1=0, v2_version=3)  # v1=0: ID3v1은 아래서 수동 기록
+
+    # ID3v1 태그: CP949로 직접 기록 (한글 깨짐 방지)
+    write_id3v1_cp949(filepath, title=title, artist=artist, comment=copyright_text)
 ```
 
 ---
@@ -120,9 +195,11 @@ def write_tags(filepath, artist, title, copyright_text, url):
 ## Output File Naming
 
 Output MP3 filename rule (consistent with project CLAUDE.md):
-- Format: `{아티스트}-{제목}.mp3`
-- **No spaces** — replace spaces with empty string or use as-is per project convention
-- Example: `IU-Blueming.mp3`, `NewJeans-HypeBoy.mp3`
+- 메인 파일: `{아티스트}-{제목}.mp3` (띄어쓰기 유지)
+- 60초 샘플: `s{아티스트}-{제목}.mp3` (접두사 `s` 추가, 띄어쓰기 유지)
+- Example: `IU-Blueming.mp3` + `sIU-Blueming.mp3`
+- Example (한글): `[악보바다MR]신의 악단 OST-주 예수 나의 산 소망.mp3`
+- 공백을 `_`나 다른 문자로 치환하지 말고 원본 그대로 유지
 
 ---
 
@@ -165,8 +242,10 @@ For each file processed, output a structured log:
 [OK] IU-Blueming.wav
   → 정규화: -0.3dBTP
   → 변환: 320kbps MP3
+  → 샘플: 192kbps MP3 (0~60s, 55~60s 페이드아웃)
   → 태그: 아티스트=IU, 제목=Blueming, 저작권=미디어라운드(주), URL=www.akbobada.com
   → 출력: ./output/IU-Blueming.mp3
+  → 샘플 출력: ./output/sIU-Blueming.mp3
 ```
 
 ---
@@ -190,6 +269,8 @@ When creating or updating this agent's code:
 - [ ] `mutagen` for ID3v1+v2 tag writing
 - [ ] Filename parser: split on first `-`
 - [ ] Output naming: no spaces, `{아티스트}-{제목}.mp3`
+- [ ] 60초 샘플 생성: `s{아티스트}-{제목}.mp3`, 192kbps, 55-60s 페이드아웃
+- [ ] 샘플에도 동일 ID3 태그 적용
 - [ ] Cross-platform compatibility (Windows/macOS)
 - [ ] No paid API usage
 

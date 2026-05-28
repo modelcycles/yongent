@@ -12,8 +12,16 @@ from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from .downloader import COOKIES_FILE, _safe_filename, download_audio, search_youtube
-from .metadata import collect_all_metadata
-from .schemas import DownloadRequest, JobStatusResponse, SearchRequest, SearchResponse
+from .metadata import collect_all_metadata, search_melon_candidates
+from .schemas import (
+    DetailRequest,
+    DownloadRequest,
+    JobStatusResponse,
+    SearchCandidate,
+    SearchListResponse,
+    SearchRequest,
+    SearchResponse,
+)
 from .trimmer import make_60s_clip
 
 logger = logging.getLogger(__name__)
@@ -113,15 +121,24 @@ async def health():
     return {"status": "ok"}
 
 
-@router.post("/search", response_model=SearchResponse)
+@router.post("/search", response_model=SearchListResponse)
 async def search(req: SearchRequest):
-    """메타데이터 수집 (다운로드 없음). 보통 2~5초 소요."""
-    artist, title = _parse_query(req.query)
-    if not title:
-        raise HTTPException(status_code=422, detail="곡명을 입력해주세요 (예: 아이유 - 좋은날)")
+    """Melon 검색 후보 목록 반환 (가벼운 요약). 상세는 /details로 조회."""
+    query = req.query.strip()
+    if not query:
+        raise HTTPException(status_code=422, detail="검색어를 입력해주세요 (예: 아이유 좋은날)")
 
+    candidates = await search_melon_candidates(query, limit=5)
+    return SearchListResponse(
+        results=[SearchCandidate(**c) for c in candidates]
+    )
+
+
+@router.post("/details", response_model=SearchResponse)
+async def details(req: DetailRequest):
+    """선택한 곡(song_id)의 전체 메타데이터 수집. 보통 2~5초 소요."""
     # 메타데이터 수집 (async)
-    meta = await collect_all_metadata(artist, title)
+    meta = await collect_all_metadata(req.artist, req.title, song_id=req.song_id)
 
     # YouTube 검색 — blocking 이므로 thread pool에서 실행
     search_q = f"{meta['artist']} {meta['title']} official audio"

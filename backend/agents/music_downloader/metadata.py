@@ -5,6 +5,7 @@ import asyncio
 import logging
 import os
 import re
+import unicodedata
 from typing import Optional
 
 import httpx
@@ -42,39 +43,93 @@ def _melon_headers() -> dict:
     }
 
 
-# ─── Melon 스크래핑 ──────────────────────────────────────────────────────────
+# ─── 텍스트 정규화 ───────────────────────────────────────────────────────────
 
 
-async def fetch_melon_metadata(artist: str, title: str) -> dict:
-    """Melon 검색 + 상세 페이지 스크래핑 → 전체 메타데이터 반환."""
+def _nfc(s: str) -> str:
+    return unicodedata.normalize("NFC", s or "").replace(" ", " ").strip()
+
+
+# ─── Melon 검색: 다중 후보 ───────────────────────────────────────────────────
+
+
+async def search_melon_candidates(query: str, limit: int = 5) -> list[dict]:
+    """Melon 검색 페이지 파싱 → 상위 N개 후보(가벼운 메타데이터) 반환."""
     headers = _melon_headers()
-
-    # ① 검색
-    song_id: Optional[str] = None
     try:
         async with httpx.AsyncClient(headers=headers, timeout=10, follow_redirects=True) as client:
             resp = await client.get(
                 f"{_MELON_BASE}/search/song/index.htm",
-                params={"q": f"{artist} {title}"},
+                params={"q": query},
             )
             resp.raise_for_status()
             html = resp.text
-
-        # song_id 추출 — goSongDetail 또는 songId 패턴
-        match = re.search(r"goSongDetail\('(\d+)'\)", html)
-        if not match:
-            match = re.search(r"songId=(\d+)", html)
-        if match:
-            song_id = match.group(1)
-        else:
-            logger.warning("[Melon] song_id 추출 실패: %s - %s", artist, title)
-            return {}
     except Exception as e:
         logger.exception("[Melon] 검색 요청 실패: %s", e)
-        return {}
+        return []
 
-    # anti-bot 딜레이
-    await asyncio.sleep(0.8)
+    soup = BeautifulSoup(html, "lxml")
+    candidates: list[dict] = []
+
+    for tr in soup.select("table tbody tr"):
+        chk = tr.select_one("input[name=input_check]")
+        if not chk or not chk.get("value"):
+            continue
+        song_id = chk["value"]
+
+        cells = tr.select("td.t_left")
+        if len(cells) < 3:
+            continue
+        song_cell, artist_cell, album_cell = cells[0], cells[1], cells[2]
+
+        # 곡명 — 재생 가능 행은 a.fc_gray, 비활성 행은 span[title] (둘 다 title 속성에 깔끔한 곡명)
+        title_el = song_cell.select_one("a.fc_gray[title]") or song_cell.select_one(
+            "div.ellipsis > span[title]"
+        )
+        title = title_el.get("title", "").strip() if title_el else ""
+
+        # 아티스트 — #artistName에서 숨김 중복 span 제거 후 텍스트
+        artist = ""
+        artist_el = artist_cell.select_one("#artistName")
+        if artist_el:
+            for hidden in artist_el.select(".checkEllipsisSongdefaultList"):
+                hidden.decompose()
+            artist = artist_el.get_text(strip=True)
+
+        # 앨범 — goAlbumDetail 링크
+        album_el = album_cell.select_one("a[href*=goAlbumDetail]")
+        album = album_el.get_text(strip=True) if album_el else ""
+
+        candidates.append(
+            {
+                "song_id": song_id,
+                "title": _nfc(title),
+                "artist": _nfc(artist),
+                "album": _nfc(album),
+                "cover_url": "",  # 검색 결과 행에는 썸네일 없음 — 상세 조회 시 채움
+            }
+        )
+        if len(candidates) >= limit:
+            break
+
+    return candidates
+
+
+# ─── Melon 스크래핑 ──────────────────────────────────────────────────────────
+
+
+async def fetch_melon_metadata(artist: str, title: str) -> dict:
+    """Melon 검색 후 첫 후보의 상세 메타데이터 반환 (song_id 미지정 경로)."""
+    candidates = await search_melon_candidates(f"{artist} {title}", limit=1)
+    if not candidates:
+        logger.warning("[Melon] song_id 추출 실패: %s - %s", artist, title)
+        return {}
+    return await fetch_melon_detail(candidates[0]["song_id"], artist, title)
+
+
+async def fetch_melon_detail(song_id: str, artist: str, title: str) -> dict:
+    """song_id 상세 페이지 스크래핑 → 전체 메타데이터 반환."""
+    headers = _melon_headers()
 
     # ② 상세 페이지
     try:
@@ -320,10 +375,13 @@ async def fetch_genius_lyrics(artist: str, title: str) -> Optional[str]:
 # ─── 통합 수집 ───────────────────────────────────────────────────────────────
 
 
-async def collect_all_metadata(artist: str, title: str) -> dict:
+async def collect_all_metadata(artist: str, title: str, song_id: str | None = None) -> dict:
     """Melon → Genius(폴백) 순으로 메타데이터를 수집하여 병합한 최종 dict 반환."""
     # 1단계: Melon에서 한 번에 모든 메타데이터 수집
-    melon = await fetch_melon_metadata(artist, title)
+    if song_id:
+        melon = await fetch_melon_detail(song_id, artist, title)
+    else:
+        melon = await fetch_melon_metadata(artist, title)
 
     resolved_artist = melon.get("artist") or artist
     resolved_title = melon.get("title") or title
@@ -342,12 +400,12 @@ async def collect_all_metadata(artist: str, title: str) -> dict:
         )
 
     return {
-        "artist": resolved_artist,
-        "title": resolved_title,
-        "album": melon.get("album", ""),
+        "artist": _nfc(resolved_artist),
+        "title": _nfc(resolved_title),
+        "album": _nfc(melon.get("album", "")),
         "release_date": melon.get("release_date", ""),
         "cover_url": cover_url,
-        "lyrics": lyrics,
-        "composer": melon.get("composer") or "정보 없음",
-        "lyricist": melon.get("lyricist") or "정보 없음",
+        "lyrics": _nfc(lyrics),
+        "composer": _nfc(melon.get("composer") or "정보 없음"),
+        "lyricist": _nfc(melon.get("lyricist") or "정보 없음"),
     }

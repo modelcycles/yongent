@@ -1,19 +1,19 @@
-# 추가 수정 사항
+# Additional Requirements
 
-## 메타데이터 복사 창
-- 기존에 있는 복사 창은 유지한체 새로운 복사 가능한 칸 추가 (ui/ux적으로 더 좋은 방법이 있다면 추천)
-  1. 아티스트명
-  2. 곡명
-  3. 앨범명
-  4. 가사 => 가사는 기존 가사창에 복사 버튼 추가
-  5. 작곡가
-  6. 작사가
+## Metadata Copy Panel
+- Keep the existing copy sections and add new individually copyable fields (suggest a better UI/UX approach if one exists)
+  1. Artist name
+  2. Song title
+  3. Album name
+  4. Lyrics => add a copy button directly on the existing lyrics panel
+  5. Composer
+  6. Lyricist
 
-## 유튜브 음원 다운로드시
-1. 원본 음원과 60초 셈플 음원 다운로드
-2. 60초 음원은 55초-60초 구간 페이드아웃 처리 필요
-3. 다운로드할 파일위치 요구 하기
+## YouTube Audio Download
+1. Download both the original audio and a 60-second sample
+2. The 60-second sample must have a fade-out applied from 55s to 60s
+3. Prompt the user to specify a save directory before downloading
 
-## 파일명 규칙
-1. 음원 파일은 `<아티스트명>-<곡명>.mp3` 식으로 (띄어쓰기 유지)
-2. 60초 음원 파일은 `s<아티스트명>-<곡명>.mp3` 식으로 (띄어쓰기 유지)
+## File Naming Rules
+1. Original audio file: `<ArtistName>-<SongTitle>.mp3` (preserve spaces as-is)
+2. 60-second sample file: `s<ArtistName>-<SongTitle>.mp3` (preserve spaces as-is)

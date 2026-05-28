@@ -16,7 +16,15 @@ interface SearchResult {
   youtube_url: string;
 }
 
-type SearchStatus = "idle" | "loading" | "done" | "url" | "error";
+interface SearchCandidate {
+  song_id: string;
+  title: string;
+  artist: string;
+  album: string;
+  cover_url: string;
+}
+
+type SearchStatus = "idle" | "loading" | "list" | "done" | "url" | "error";
 type DownloadStatus = "idle" | "queued" | "running" | "done" | "error";
 
 function formatDateShort(dateStr: string): string {
@@ -120,7 +128,9 @@ export default function MusicDownloaderPage() {
 
   // 검색
   const [searchStatus, setSearchStatus] = useState<SearchStatus>("idle");
+  const [searchResults, setSearchResults] = useState<SearchCandidate[]>([]);
   const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [searchError, setSearchError] = useState("");
   const [cardVisible, setCardVisible] = useState(false);
 
@@ -231,8 +241,8 @@ export default function MusicDownloaderPage() {
       a.href = objUrl;
       const result = searchResultRef.current;
       if (result) {
-        const artist = result.artist.replace(/\s/g, "");
-        const title = result.title.replace(/\s/g, "");
+        const artist = result.artist;
+        const title = result.title;
         a.download = isSample ? `s${artist}-${title}.mp3` : `${artist}-${title}.mp3`;
       } else {
         a.download = isSample ? "audio_sample.mp3" : "audio.mp3";
@@ -286,6 +296,7 @@ export default function MusicDownloaderPage() {
     if (!q) return;
 
     setSearchResult(null);
+    setSearchResults([]);
     setSearchError("");
     setDownloadStatus("idle");
     setSampleDownloadUrl(null);
@@ -297,7 +308,7 @@ export default function MusicDownloaderPage() {
       return;
     }
 
-    // 쿼리 검색
+    // 쿼리 검색 → 후보 목록
     setSearchStatus("loading");
     try {
       const res = await fetch(`${API}/music-downloader/search`, {
@@ -307,12 +318,56 @@ export default function MusicDownloaderPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail ?? "검색 실패");
+      const results: SearchCandidate[] = data.results ?? [];
+      if (results.length === 0) {
+        setSearchError("검색 결과가 없습니다. 다른 검색어로 시도해보세요.");
+        setSearchStatus("error");
+        return;
+      }
+      setSearchResults(results);
+      setSearchStatus("list");
+    } catch (err) {
+      setSearchError(err instanceof Error ? err.message : "알 수 없는 오류");
+      setSearchStatus("error");
+    }
+  }
+
+  // ─── 후보 선택 → 상세 조회 ────────────────────────────────────────────────
+
+  async function handleSelect(candidate: SearchCandidate) {
+    setDetailLoading(true);
+    setSearchError("");
+    setDownloadStatus("idle");
+    setSampleDownloadUrl(null);
+    setLyricsOpen(false);
+    try {
+      const res = await fetch(`${API}/music-downloader/details`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          song_id: candidate.song_id,
+          artist: candidate.artist,
+          title: candidate.title,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail ?? "상세 정보 조회 실패");
       setSearchResult(data);
       setSearchStatus("done");
     } catch (err) {
       setSearchError(err instanceof Error ? err.message : "알 수 없는 오류");
       setSearchStatus("error");
+    } finally {
+      setDetailLoading(false);
     }
+  }
+
+  function backToList() {
+    setSearchResult(null);
+    setDownloadStatus("idle");
+    setSampleDownloadUrl(null);
+    setLyricsOpen(false);
+    setSearchStatus("list");
   }
 
   // ─── 다운로드 시작 ──────────────────────────────────────────────────────
@@ -327,7 +382,15 @@ export default function MusicDownloaderPage() {
       const q = query.trim();
       const isUrl = q.startsWith("http");
       const saveDir = savePath.trim() || null;
-      const body = isUrl ? { url: q, save_dir: saveDir } : { query: q, save_dir: saveDir };
+      // 다운로드는 입력창 원본이 아니라 "선택한 곡" 기준으로 진행
+      const body = isUrl
+        ? { url: q, save_dir: saveDir }
+        : {
+            query: searchResult
+              ? `${searchResult.artist} - ${searchResult.title}`
+              : q,
+            save_dir: saveDir,
+          };
 
       const res = await fetch(`${API}/music-downloader/download`, {
         method: "POST",
@@ -540,6 +603,43 @@ export default function MusicDownloaderPage() {
         </div>
       )}
 
+      {/* 검색 결과 목록 */}
+      {searchStatus === "list" && (
+        <div className="rounded-xl border border-gray-700 bg-gray-900 overflow-hidden mb-4">
+          <p className="px-4 py-3 text-xs text-gray-500 border-b border-gray-800">
+            검색 결과 {searchResults.length}건 — 곡을 선택하세요
+          </p>
+          <ul>
+            {searchResults.map((c) => (
+              <li key={c.song_id}>
+                <button
+                  onClick={() => handleSelect(c)}
+                  disabled={detailLoading}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left border-b border-gray-800 last:border-b-0 hover:bg-gray-800 disabled:opacity-50 transition-colors"
+                >
+                  <div className="w-11 h-11 rounded-md bg-gray-800 flex items-center justify-center shrink-0">
+                    <span className="text-xl text-gray-600">♪</span>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm text-gray-200 truncate">{c.title}</p>
+                    <p className="text-xs text-gray-500 truncate">
+                      {c.artist} · {c.album || "—"}
+                    </p>
+                  </div>
+                  <span className="text-xs text-gray-600 shrink-0">선택 →</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          {detailLoading && (
+            <div className="flex items-center gap-3 px-4 py-3 text-sm text-gray-400 border-t border-gray-800">
+              <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
+              곡 정보 수집 중…
+            </div>
+          )}
+        </div>
+      )}
+
       {/* 결과 카드 */}
       {showCard && (
         <div
@@ -572,6 +672,14 @@ export default function MusicDownloaderPage() {
           {/* 검색 결과 카드 */}
           {searchStatus === "done" && searchResult && (
             <>
+              {/* 목록으로 */}
+              <button
+                onClick={backToList}
+                className="px-5 py-3 text-xs text-gray-400 hover:text-gray-200 border-b border-gray-800 w-full text-left transition-colors"
+              >
+                ← 검색 결과로 돌아가기
+              </button>
+
               {/* 상단: 커버 + 기본 정보 */}
               <div className="flex gap-4 p-5">
                 {searchResult.cover_url ? (
@@ -610,7 +718,7 @@ export default function MusicDownloaderPage() {
                 <button
                   onClick={() =>
                     copyText(
-                      `${searchResult.artist}의 '${searchResult.title}' (${formatDateShort(searchResult.release_date)}) 수록곡`,
+                      `${searchResult.artist}의 '${searchResult.album}' (${formatDateShort(searchResult.release_date)}) 수록곡`,
                       setCopied1
                     )
                   }

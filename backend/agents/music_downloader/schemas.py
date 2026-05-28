@@ -5,6 +5,24 @@ class SearchRequest(BaseModel):
     query: str  # "아티스트 - 곡명" 형식
 
 
+class SearchCandidate(BaseModel):
+    song_id: str
+    title: str
+    artist: str
+    album: str
+    cover_url: str  # 검색 목록에서는 비어있음 (상세 조회 시 채움)
+
+
+class SearchListResponse(BaseModel):
+    results: list[SearchCandidate]
+
+
+class DetailRequest(BaseModel):
+    song_id: str
+    artist: str
+    title: str
+
+
 class SearchResponse(BaseModel):
     artist: str
     title: str

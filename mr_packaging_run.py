@@ -209,25 +209,32 @@ for wav in wav_files:
         print(f"  → Pass 2: {MP3_BITRATE} MP3 변환 중...")
         run_ffmpeg_pass2(wav, output_mp3, measured)
 
-        # Step 2: 60초 샘플
-        print(f"  → 60초 샘플 생성 중...")
-        make_60s_sample(output_mp3, output_sample)
+        # Step 2: 60초 샘플 ([악보바다MR]합창 아티스트는 샘플 생략)
+        skip_sample = (artist == "[악보바다MR]합창")
+        if skip_sample:
+            print(f"  → 60초 샘플 생략 ([악보바다MR]합창)")
+        else:
+            print(f"  → 60초 샘플 생성 중...")
+            make_60s_sample(output_mp3, output_sample)
 
         # Step 3: ID3 태그 (메인)
         write_id3v2_tags(str(output_mp3), artist, title)
         write_id3v1_cp949(str(output_mp3), title, artist)
 
         # Step 4: ID3 태그 (샘플)
-        write_id3v2_tags(str(output_sample), artist, title)
-        write_id3v1_cp949(str(output_sample), title, artist)
+        if not skip_sample:
+            write_id3v2_tags(str(output_sample), artist, title)
+            write_id3v1_cp949(str(output_sample), title, artist)
 
         print(f"  [OK] {wav.name}")
         print(f"    → 정규화: -0.3dBTP (loudnorm 2-pass)")
         print(f"    → 변환: {MP3_BITRATE} MP3")
-        print(f"    → 샘플: 192kbps MP3 (0~60s, 55~60s 페이드아웃)")
+        if not skip_sample:
+            print(f"    → 샘플: 192kbps MP3 (0~60s, 55~60s 페이드아웃)")
         print(f"    → 태그: 아티스트={artist}, 제목={title}, 저작권={COPYRIGHT}, URL={URL}")
         print(f"    → 출력: {output_mp3}")
-        print(f"    → 샘플 출력: {output_sample}")
+        if not skip_sample:
+            print(f"    → 샘플 출력: {output_sample}")
         print()
         success_count += 1
 

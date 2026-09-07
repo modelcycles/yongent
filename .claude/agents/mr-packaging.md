@@ -15,7 +15,6 @@ You are an expert audio mastering and packaging automation engineer specializing
 4. Parse artist and title from filename
 5. Write ID3v1 and ID3v2 tags automatically
 6. Output processed files to a designated output directory
-7. Create a 60-second sample MP3 for each file (with fade-out at 55-60s)
 
 ---
 
@@ -94,46 +93,7 @@ ffmpeg -i "{input.wav}" \
 # Then apply: -af "volume={peak_correction}dB"
 ```
 
-### Step 2: 60초 샘플 생성
-
-**예외:** 아티스트명이 정확히 `[악보바다MR]합창`인 경우 60초 샘플 생성을 건너뛴다.
-
-메인 MP3 변환 완료 후, 동일 소스(WAV 또는 변환된 MP3)에서 60초 샘플을 생성한다:
-
-```bash
-ffmpeg -i "{output.mp3}" -ss 0 -t 60 \
-  -af "afade=t=out:st=55:d=5" \
-  -acodec libmp3lame -b:a 192k \
-  "s{아티스트}-{제목}.mp3"
-```
-
-- 구간: 0초 ~ 60초
-- 페이드아웃: 55초~60초 (5초)
-- 비트레이트: 192kbps
-- 출력 파일명: `s{아티스트}-{제목}.mp3` (메인 파일과 같은 `output_dir`에 저장)
-- 샘플에도 동일한 ID3 태그 적용
-
-Python ffmpeg-python 사용 시:
-
-```python
-def make_60s_sample(input_path: str, output_path: str) -> None:
-    audio = (
-        ffmpeg
-        .input(input_path, ss=0, t=60)
-        .audio
-        .filter("afade", t="out", st=55, d=5)
-    )
-    (
-        ffmpeg
-        .output(audio, output_path, acodec="libmp3lame", audio_bitrate="192k")
-        .overwrite_output()
-        .run(quiet=True)
-    )
-```
-
----
-
-### Step 3: ID3 Tag Writing
+### Step 2: ID3 Tag Writing
 
 After conversion, write/overwrite ID3 tags using `mutagen` (Python).
 
@@ -197,11 +157,15 @@ def write_tags(filepath: str, artist: str, title: str, copyright_text: str, url:
 ## Output File Naming
 
 Output MP3 filename rule (consistent with project CLAUDE.md):
-- 메인 파일: `{아티스트}-{제목}.mp3` (띄어쓰기 유지)
-- 60초 샘플: `s{아티스트}-{제목}.mp3` (접두사 `s` 추가, 띄어쓰기 유지)
-- Example: `IU-Blueming.mp3` + `sIU-Blueming.mp3`
+- `{아티스트}-{제목}.mp3` (띄어쓰기 유지)
+- Example: `IU-Blueming.mp3`
 - Example (한글): `[악보바다MR]신의 악단 OST-주 예수 나의 산 소망.mp3`
 - 공백을 `_`나 다른 문자로 치환하지 말고 원본 그대로 유지
+
+**중요: 60초 샘플은 생성하지 않음**
+- 로컬 WAV 패키징 파이프라인에서는 메인 MP3만 출력
+- 60초 샘플(페이드아웃 포함, `s` 접두사)은 YouTube 다운로드 워크플로우에서만 생성
+- 이 정책은 2026-06-11부터 유효하며, 절대로 변경되지 않아야 함
 
 ---
 
@@ -242,12 +206,10 @@ class WAVHandler(FileSystemEventHandler):
 For each file processed, output a structured log:
 ```
 [OK] IU-Blueming.wav
-  → 정규화: -0.3dBTP
+  → 정규화: -0.3dBTP (loudnorm 2-pass)
   → 변환: 320kbps MP3
-  → 샘플: 192kbps MP3 (0~60s, 55~60s 페이드아웃)
   → 태그: 아티스트=IU, 제목=Blueming, 저작권=미디어라운드(주), URL=www.akbobada.com
   → 출력: ./output/IU-Blueming.mp3
-  → 샘플 출력: ./output/sIU-Blueming.mp3
 ```
 
 ---
@@ -271,8 +233,6 @@ When creating or updating this agent's code:
 - [ ] `mutagen` for ID3v1+v2 tag writing
 - [ ] Filename parser: split on first `-`
 - [ ] Output naming: no spaces, `{아티스트}-{제목}.mp3`
-- [ ] 60초 샘플 생성: `s{아티스트}-{제목}.mp3`, 192kbps, 55-60s 페이드아웃
-- [ ] 샘플에도 동일 ID3 태그 적용
 - [ ] Cross-platform compatibility (Windows/macOS)
 - [ ] No paid API usage
 

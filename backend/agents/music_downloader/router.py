@@ -56,12 +56,19 @@ def _parse_query(query: str) -> tuple[str, str]:
 
 
 def _run_download_job(
-    job_id: str, url: str | None, query: str | None, save_dir: str | None
+    job_id: str,
+    url: str | None,
+    query: str | None,
+    youtube_url: str | None,
+    save_dir: str | None,
 ) -> None:
     """BackgroundTasks로 실행되는 동기 다운로드 파이프라인."""
     jobs[job_id]["status"] = "running"
     try:
         artist, title = _parse_query(query) if query else ("", "")
+
+        # /details에서 이미 찾은 영상이 있으면 재검색 없이 사용
+        url = url or youtube_url
 
         # URL 없으면 YouTube 검색
         if not url:
@@ -143,7 +150,12 @@ async def details(req: DetailRequest):
     # YouTube 검색 — blocking 이므로 thread pool에서 실행
     search_q = f"{meta['artist']} {meta['title']} official audio"
     youtube_url = await asyncio.to_thread(
-        lambda: search_youtube(search_q, artist=meta["artist"], title=meta["title"])
+        lambda: search_youtube(
+            search_q,
+            artist=meta["artist"],
+            title=meta["title"],
+            ref_duration=meta.get("duration_sec", 0),
+        )
     ) or ""
 
     # 커버 아트 폴백: CAA/Deezer 모두 실패 시 YouTube 썸네일 사용
@@ -172,7 +184,9 @@ async def download(req: DownloadRequest, background_tasks: BackgroundTasks):
 
     job_id = str(uuid.uuid4())[:8]
     jobs[job_id] = {"status": "queued", "step": "대기 중"}
-    background_tasks.add_task(_run_download_job, job_id, req.url, req.query, req.save_dir)
+    background_tasks.add_task(
+        _run_download_job, job_id, req.url, req.query, req.youtube_url, req.save_dir
+    )
     return JobStatusResponse(job_id=job_id, status="queued", step="대기 중")
 
 

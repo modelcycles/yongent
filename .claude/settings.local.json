@@ -6,7 +6,8 @@
       "Bash(curl:*)",
       "Bash(python3 -c \"\nimport sys, os\nsys.stdout.reconfigure\\(encoding='utf-8'\\)\nfrom mutagen.mp3 import MP3\nfrom mutagen.id3 import ID3\n\noutput_dir = 'C:/Users/cho01/Desktop/code/mr-packaging/output'\nfor f in sorted\\(os.listdir\\(output_dir\\)\\):\n    if not f.endswith\\('.mp3'\\):\n        continue\n    path = os.path.join\\(output_dir, f\\)\n    audio = MP3\\(path\\)\n    tags = ID3\\(path\\)\n    size_kb = os.path.getsize\\(path\\) // 1024\n    duration = int\\(audio.info.length\\)\n    bitrate = audio.info.bitrate // 1000\n    print\\(f'{f}'\\)\n    print\\(f'  크기: {size_kb}KB | 길이: {duration}s | 비트레이트: {bitrate}kbps'\\)\n    print\\(f'  TIT2: {tags.get\\(\\\\\"TIT2\\\\\"\\)}'\\)\n    print\\(f'  TPE1: {tags.get\\(\\\\\"TPE1\\\\\"\\)}'\\)\n    print\\(f'  TCOP: {tags.get\\(\\\\\"TCOP\\\\\"\\)}'\\)\n    print\\(f'  WXXX: {tags.get\\(\\\\\"WXXX:URL\\\\\"\\)}'\\)\n    print\\(\\)\n\")",
       "Read(//c/Users/cho01/Desktop/code/**)",
-      "Bash(python3 -c \":*)"
+      "Bash(python3 -c \":*)",
+      "Bash(./.venv/Scripts/python.exe \"C:/Users/cho01/AppData/Local/Temp/claude/C--Users-cho01-Desktop-code-yongent/4fa77bc5-a80d-4ca1-b665-69e1445660d8/scratchpad/test_search.py\" \"아이유\" \"좋은 날\" 226)"
     ]
   }
 }

@@ -177,9 +177,10 @@ async def fetch_melon_detail(song_id: str, artist: str, title: str) -> dict:
                 song_artist = text
                 break
 
-    # ⑥ 앨범·발매일 — dl dt/dd 구조
+    # ⑥ 앨범·발매일·재생시간 — dl dt/dd 구조
     album = ""
     release_date = ""
+    duration_sec = 0
 
     for dt in soup.find_all("dt"):
         label = dt.get_text(strip=True)
@@ -191,6 +192,8 @@ async def fetch_melon_detail(song_id: str, artist: str, title: str) -> dict:
             album = value
         elif "발매일" in label:
             release_date = _normalize_date(value)
+        elif "재생 시간" in label or "재생시간" in label:
+            duration_sec = _parse_duration(value)
 
     # ⑦ 작곡가/작사가 — ul.list_person > li 단위로 이름과 역할 1:1 매핑
     composer_names: list[str] = []
@@ -218,7 +221,7 @@ async def fetch_melon_detail(song_id: str, artist: str, title: str) -> dict:
         if el:
             for br in el.find_all("br"):
                 br.replace_with("\n")
-            text = el.get_text(separator="\n", strip=True)
+            text = _clean_lyrics(el.get_text())
             if len(text) > 20:
                 lyrics = text
                 break
@@ -236,7 +239,7 @@ async def fetch_melon_detail(song_id: str, artist: str, title: str) -> dict:
                 lyrics_soup = BeautifulSoup(resp.text, "lxml")
                 for br in lyrics_soup.find_all("br"):
                     br.replace_with("\n")
-                raw = lyrics_soup.get_text(separator="\n", strip=True)
+                raw = _clean_lyrics(lyrics_soup.get_text())
                 if len(raw) > 20:
                     lyrics = raw
         except Exception as e:
@@ -247,11 +250,33 @@ async def fetch_melon_detail(song_id: str, artist: str, title: str) -> dict:
         "title": song_title or title,
         "album": album,
         "release_date": release_date,
+        "duration_sec": duration_sec,
         "cover_url": cover_url,
         "composer": composer,
         "lyricist": lyricist,
         "lyrics": lyrics,
     }
+
+
+def _clean_lyrics(raw: str) -> str:
+    """줄별 양끝 공백만 정리하고 문단 사이 빈 줄(<br><br>)은 보존한다."""
+    lines = [line.strip() for line in raw.split("\n")]
+    text = "\n".join(lines).strip()
+    # 빈 줄이 3개 이상 연속되면 문단 구분용 1개(빈 줄)로 축소
+    return re.sub(r"\n{3,}", "\n\n", text)
+
+
+def _parse_duration(raw: str) -> int:
+    """'04:01' / '1:02:03' 형태의 재생 시간 → 초. 파싱 불가 시 0."""
+    parts = re.findall(r"\d+", raw or "")
+    if not parts:
+        return 0
+    nums = [int(p) for p in parts]
+    if len(nums) == 2:  # m:ss
+        return nums[0] * 60 + nums[1]
+    if len(nums) == 3:  # h:mm:ss
+        return nums[0] * 3600 + nums[1] * 60 + nums[2]
+    return 0
 
 
 def _normalize_date(raw: str) -> str:
@@ -279,11 +304,8 @@ def _normalize_date(raw: str) -> str:
 # ─── Deezer 커버 폴백 ────────────────────────────────────────────────────────
 
 
-async def fetch_cover_art(melon_cover_url: str, artist: str, title: str) -> str:
-    """앨범 커버 URL — Melon 커버 1순위, Deezer 폴백."""
-    if melon_cover_url:
-        return melon_cover_url
-
+async def fetch_deezer_info(artist: str, title: str) -> dict:
+    """Deezer 검색 → 첫 트랙의 커버·재생시간 반환. 실패 시 빈 값."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
@@ -293,14 +315,15 @@ async def fetch_cover_art(melon_cover_url: str, artist: str, title: str) -> str:
             resp.raise_for_status()
             items = resp.json().get("data", [])
             if items:
-                cover_xl = items[0].get("album", {}).get("cover_xl", "")
-                if cover_xl:
-                    logger.info("[Deezer] 커버 아트 폴백 찾음")
-                    return cover_xl
+                item = items[0]
+                return {
+                    "cover": item.get("album", {}).get("cover_xl", ""),
+                    "duration": int(item.get("duration") or 0),
+                }
     except Exception as e:
-        logger.warning("[Deezer] 커버 아트 폴백 실패: %s", e)
+        logger.warning("[Deezer] 정보 폴백 실패: %s", e)
 
-    return ""
+    return {"cover": "", "duration": 0}
 
 
 # ─── Genius: 가사 ────────────────────────────────────────────────────────────
@@ -360,7 +383,9 @@ async def fetch_genius_lyrics(artist: str, title: str) -> Optional[str]:
 
         # 폴백: class 이름에 "Lyrics" 포함하는 div
         for div in soup.find_all("div", class_=re.compile(r"Lyrics")):
-            text = div.get_text(separator="\n", strip=True)
+            for br in div.find_all("br"):
+                br.replace_with("\n")
+            text = _clean_lyrics(div.get_text())
             if len(text) > 100:
                 return text
 
@@ -386,10 +411,13 @@ async def collect_all_metadata(artist: str, title: str, song_id: str | None = No
     resolved_artist = melon.get("artist") or artist
     resolved_title = melon.get("title") or title
 
-    # 2단계: Melon 커버가 없으면 Deezer 폴백
-    cover_url = await fetch_cover_art(
-        melon.get("cover_url", ""), resolved_artist, resolved_title
-    )
+    # 2단계: 커버·재생시간 중 하나라도 비면 Deezer 1회 폴백
+    cover_url = melon.get("cover_url", "")
+    duration_sec = melon.get("duration_sec", 0)
+    if not cover_url or not duration_sec:
+        deezer = await fetch_deezer_info(resolved_artist, resolved_title)
+        cover_url = cover_url or deezer["cover"]
+        duration_sec = duration_sec or deezer["duration"]
 
     # 3단계: 가사가 없을 때만 Genius 폴백
     lyrics = melon.get("lyrics", "")
@@ -404,6 +432,7 @@ async def collect_all_metadata(artist: str, title: str, song_id: str | None = No
         "title": _nfc(resolved_title),
         "album": _nfc(melon.get("album", "")),
         "release_date": melon.get("release_date", ""),
+        "duration_sec": duration_sec,
         "cover_url": cover_url,
         "lyrics": _nfc(lyrics),
         "composer": _nfc(melon.get("composer") or "정보 없음"),

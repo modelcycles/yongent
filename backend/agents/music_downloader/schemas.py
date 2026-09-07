@@ -38,6 +38,7 @@ class SearchResponse(BaseModel):
 class DownloadRequest(BaseModel):
     query: str | None = None
     url: str | None = None
+    youtube_url: str | None = None  # /details에서 이미 찾은 영상 URL (재검색 방지)
     save_dir: str | None = None  # 로컬 저장 경로 (선택)
 
 

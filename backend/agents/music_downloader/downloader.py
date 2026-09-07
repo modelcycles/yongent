@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from pathlib import Path
 
 import yt_dlp
@@ -47,33 +48,77 @@ def _base_opts() -> dict:
 
 # ─── 검색 점수 계산 ───────────────────────────────────────────────────────────
 
+# 적합도가 이 값 미만이면 결과를 버림 (전부 미달이면 None 반환)
+_MIN_SCORE = 0
+# 점수가 무조건 버려지는 하한 (duration 큰 차이·아티스트 근거 없음)
+_REJECT = -1000
 
-def _score_entry(entry: dict, artist: str, title: str) -> int:
-    """검색 결과 적합도 점수 계산. 높을수록 적합."""
+# 곡 본편이 아닌 변형 버전을 가려내는 부정 키워드
+_NEG_RE = re.compile(
+    r"\b(cover|live|remix|slowed|sped\s*up|nightcore|8d|3d|instrumental|inst"
+    r"|mr|karaoke|reaction|1\s*hour|loop|edit|mashup|teaser|preview)\b",
+    re.I,
+)
+
+
+def _norm(s: str) -> str:
+    """NFC 정규화 + 소문자 + 공백·구두점 제거 → 견고한 부분 일치 비교용."""
+    s = unicodedata.normalize("NFC", s or "").lower()
+    return re.sub(r"[\s\W_]+", "", s)
+
+
+def _score_entry(entry: dict, artist: str, title: str, ref_duration: int = 0) -> int:
+    """검색 결과 적합도 점수 계산. 높을수록 적합. _REJECT면 부적합."""
     score = 0
-    vtitle = (entry.get("title") or "").lower()
-    channel = (entry.get("channel") or entry.get("uploader") or "").lower()
+    vtitle_raw = (entry.get("title") or "")
+    vtitle = _norm(vtitle_raw)
+    channel = _norm(entry.get("channel") or entry.get("uploader") or "")
     duration = entry.get("duration") or 0
-    a = artist.lower()
-    t = title.lower()
+    a = _norm(artist)
+    t = _norm(title)
 
-    if t and t in vtitle:
+    # ── 공식 채널 여부 (Topic/VEVO/Official Art Track = 라벨 공식 음원) ──
+    is_official = any(kw in channel for kw in ("topic", "vevo", "official"))
+    if is_official:
+        score += 40
+
+    # ── 제목·아티스트 일치 ──
+    title_match = bool(t and t in vtitle)
+    artist_match = bool(a and (a in vtitle or a in channel))
+    if title_match:
         score += 30
     if a and a in vtitle:
         score += 20
     if a and a in channel:
         score += 20
 
-    for kw in ("official", "vevo", "topic"):
-        if kw in channel:
-            score += 15
-            break
+    # ── 아티스트 근거가 전혀 없고 공식 채널도 아니면 사실상 탈락 ──
+    if not artist_match and not is_official:
+        score += _REJECT
 
-    # 2~7분 선호 (라이브·앨범 풀버전 제외)
-    if 90 <= duration <= 420:
-        score += 10
-    elif duration > 420:
-        score -= 10
+    # ── 부정 키워드 ──
+    if _NEG_RE.search(vtitle_raw):
+        score -= 40
+
+    # ── 재생시간 앵커 (가장 강력한 신호) ──
+    if ref_duration > 0 and duration > 0:
+        diff = abs(duration - ref_duration)
+        if diff <= 2:
+            score += 50
+        elif diff <= 5:
+            score += 30
+        elif diff <= 10:
+            score += 10
+        elif diff <= 15:
+            score -= 20
+        else:
+            score += _REJECT  # 명백히 다른 길이 → 버림
+    else:
+        # 참조 길이 없을 때만 기존 휴리스틱 (2~7분 선호)
+        if 90 <= duration <= 420:
+            score += 10
+        elif duration > 420:
+            score -= 10
 
     return score
 
@@ -81,8 +126,10 @@ def _score_entry(entry: dict, artist: str, title: str) -> int:
 # ─── 공개 API ────────────────────────────────────────────────────────────────
 
 
-def search_youtube(query: str, artist: str = "", title: str = "") -> str | None:
-    """YouTube 검색 → 적합도 점수가 가장 높은 URL 반환."""
+def search_youtube(
+    query: str, artist: str = "", title: str = "", ref_duration: int = 0
+) -> str | None:
+    """YouTube 검색 → 적합도 점수가 가장 높은 URL 반환. 전부 미달이면 None."""
     ydl_opts = {
         **_base_opts(),
         "quiet": True,
@@ -95,7 +142,9 @@ def search_youtube(query: str, artist: str = "", title: str = "") -> str | None:
         entries = (results or {}).get("entries") or []
         if not entries:
             return None
-        best = max(entries, key=lambda e: _score_entry(e, artist, title))
+        best = max(entries, key=lambda e: _score_entry(e, artist, title, ref_duration))
+        if _score_entry(best, artist, title, ref_duration) < _MIN_SCORE:
+            return None
         return best.get("webpage_url")
 
 

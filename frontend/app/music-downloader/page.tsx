@@ -41,7 +41,7 @@ interface DownloadSectionProps {
   error: string;
   savePath: string;
   setSavePath: (v: string) => void;
-  onDownload: () => void;
+  onDownload: (kind: "full" | "sample") => void;
   onSampleDownload: (() => void) | null;
 }
 
@@ -56,7 +56,7 @@ function DownloadSection({
 }: DownloadSectionProps) {
   if (status === "queued" || status === "running") {
     return (
-      <div className="flex items-center gap-3 text-sm text-gray-300">
+      <div className="flex items-center gap-3 text-sm text-gray-300 light:text-gray-700">
         <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
         {step || "처리 중…"}
       </div>
@@ -65,18 +65,18 @@ function DownloadSection({
   if (status === "done") {
     return (
       <div className="space-y-2">
-        <span className="text-sm text-green-400">다운로드 완료</span>
+        <span className="text-sm text-green-400 light:text-green-600">다운로드 완료</span>
         <div className="flex gap-2 flex-wrap">
           <button
-            onClick={onDownload}
-            className="rounded-lg bg-gray-800 hover:bg-gray-700 px-4 py-2 text-sm font-medium transition-colors"
+            onClick={() => onDownload("full")}
+            className="rounded-lg bg-gray-800 hover:bg-gray-700 light:bg-gray-100 light:hover:bg-gray-200 px-4 py-2 text-sm font-medium transition-colors"
           >
             원본 다시 받기
           </button>
           {onSampleDownload && (
             <button
               onClick={onSampleDownload}
-              className="rounded-lg bg-gray-800 hover:bg-gray-700 px-4 py-2 text-sm font-medium transition-colors"
+              className="rounded-lg bg-gray-800 hover:bg-gray-700 light:bg-gray-100 light:hover:bg-gray-200 px-4 py-2 text-sm font-medium transition-colors"
             >
               60초 샘플 다시 받기
             </button>
@@ -88,9 +88,9 @@ function DownloadSection({
   if (status === "error") {
     return (
       <div className="space-y-2">
-        <p className="text-sm text-red-400">{error}</p>
+        <p className="text-sm text-red-400 light:text-red-600">{error}</p>
         <button
-          onClick={onDownload}
+          onClick={() => onDownload("full")}
           className="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2.5 text-sm font-medium transition-colors"
         >
           ⬇ 다시 시도
@@ -107,15 +107,23 @@ function DownloadSection({
           placeholder="예: /Users/이름/Music  (비워두면 브라우저 다운로드만)"
           value={savePath}
           onChange={(e) => setSavePath(e.target.value)}
-          className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm placeholder-gray-600 focus:outline-none focus:border-gray-500 font-mono"
+          className="w-full rounded-lg bg-gray-800 border border-gray-700 light:bg-gray-100 light:border-gray-300 px-3 py-2 text-sm placeholder-gray-600 light:placeholder-gray-400 focus:outline-none focus:border-gray-500 font-mono"
         />
       </div>
-      <button
-        onClick={onDownload}
-        className="w-full rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2.5 text-sm font-semibold transition-colors"
-      >
-        ⬇ 원본 + 60초 샘플 다운로드
-      </button>
+      <div className="flex gap-2">
+        <button
+          onClick={() => onDownload("full")}
+          className="flex-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2.5 text-sm font-semibold transition-colors"
+        >
+          ⬇ 원본 다운로드
+        </button>
+        <button
+          onClick={() => onDownload("sample")}
+          className="flex-1 rounded-lg bg-gray-800 hover:bg-gray-700 light:bg-gray-100 light:hover:bg-gray-200 px-4 py-2.5 text-sm font-semibold transition-colors"
+        >
+          ⬇ 60초 샘플 다운로드
+        </button>
+      </div>
     </div>
   );
 }
@@ -154,6 +162,7 @@ export default function MusicDownloaderPage() {
   const [sampleDownloadUrl, setSampleDownloadUrl] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const searchResultRef = useRef<SearchResult | null>(null);
+  const downloadKindRef = useRef<"full" | "sample">("full");
 
   // 쿠키
   const [cookieActive, setCookieActive] = useState<boolean | null>(null);
@@ -211,9 +220,12 @@ export default function MusicDownloaderPage() {
           clearInterval(pollRef.current!);
           setDownloadStatus("done");
           setSampleDownloadUrl(data.sample_download_url || null);
-          triggerBrowserDownload(`${API}${data.download_url}`, false);
-          if (data.sample_download_url) {
-            setTimeout(() => triggerBrowserDownload(`${API}${data.sample_download_url}`, true), 1000);
+          if (downloadKindRef.current === "sample") {
+            if (data.sample_download_url) {
+              triggerBrowserDownload(`${API}${data.sample_download_url}`, true);
+            }
+          } else {
+            triggerBrowserDownload(`${API}${data.download_url}`, false);
           }
         } else if (data.status === "error") {
           clearInterval(pollRef.current!);
@@ -372,7 +384,8 @@ export default function MusicDownloaderPage() {
 
   // ─── 다운로드 시작 ──────────────────────────────────────────────────────
 
-  async function handleDownload() {
+  async function handleDownload(kind: "full" | "sample") {
+    downloadKindRef.current = kind;
     setDownloadStatus("queued");
     setDownloadStep("대기 중");
     setDownloadError("");
@@ -389,6 +402,8 @@ export default function MusicDownloaderPage() {
             query: searchResult
               ? `${searchResult.artist} - ${searchResult.title}`
               : q,
+            // /details에서 이미 찾은 영상을 그대로 사용 (백엔드 재검색 방지)
+            youtube_url: searchResult?.youtube_url || null,
             save_dir: saveDir,
           };
 
@@ -422,25 +437,25 @@ export default function MusicDownloaderPage() {
     <div className="max-w-2xl">
       {/* 헤더 */}
       <h1 className="text-2xl font-bold mb-1">Music Downloader</h1>
-      <p className="text-gray-400 text-sm mb-6">
+      <p className="text-gray-400 light:text-gray-600 text-sm mb-6">
         아티스트명 - 곡명을 입력하면 곡 정보와 음원을 가져옵니다.
       </p>
 
       {/* YouTube 연결 패널 */}
-      <div className="rounded-lg border border-gray-700 bg-gray-900 mb-6 overflow-hidden">
+      <div className="rounded-lg border border-gray-700 bg-gray-900 light:border-gray-200 light:bg-white mb-6 overflow-hidden">
         <div className="flex items-center gap-3 px-4 py-3">
-          <span className="text-sm font-medium text-gray-200">YouTube 연결</span>
+          <span className="text-sm font-medium text-gray-200 light:text-gray-800">YouTube 연결</span>
           {cookieActive === null ? (
             <span className="text-xs text-gray-500">확인 중…</span>
           ) : cookieActive ? (
             <>
-              <span className="flex items-center gap-1.5 text-xs text-green-400">
+              <span className="flex items-center gap-1.5 text-xs text-green-400 light:text-green-600">
                 <span className="w-2 h-2 rounded-full bg-green-400 inline-block" />
                 연결됨
               </span>
               {cookiePath && (
                 <span
-                  className="text-xs text-gray-600 font-mono truncate max-w-[200px]"
+                  className="text-xs text-gray-600 light:text-gray-400 font-mono truncate max-w-[200px]"
                   title={cookiePath}
                 >
                   {cookiePath.split(/[/\\]/).slice(-3).join("/")}
@@ -455,7 +470,7 @@ export default function MusicDownloaderPage() {
             </>
           ) : (
             <>
-              <span className="flex items-center gap-1.5 text-xs text-yellow-500">
+              <span className="flex items-center gap-1.5 text-xs text-yellow-500 light:text-yellow-600">
                 <span className="w-2 h-2 rounded-full bg-yellow-500 inline-block" />
                 미연결
               </span>
@@ -470,16 +485,16 @@ export default function MusicDownloaderPage() {
         </div>
 
         {!cookieActive && cookieGuideOpen && (
-          <div className="border-t border-gray-700 px-4 py-4 space-y-4">
+          <div className="border-t border-gray-700 light:border-gray-200 px-4 py-4 space-y-4">
             <ol className="space-y-3 text-sm">
               {[
                 <>
-                  <span className="text-white font-medium">YouTube에 로그인</span>하세요.
+                  <span className="text-white light:text-gray-900 font-medium">YouTube에 로그인</span>하세요.
                   <br />
                   <span className="text-gray-500 text-xs">Chrome / Edge / Firefox 아무거나 OK</span>
                 </>,
                 <>
-                  <span className="text-white font-medium">확장 프로그램을 설치</span>하세요.
+                  <span className="text-white light:text-gray-900 font-medium">확장 프로그램을 설치</span>하세요.
                   <br />
                   <a
                     href="https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc"
@@ -500,9 +515,9 @@ export default function MusicDownloaderPage() {
                   </a>
                 </>,
                 <>
-                  <span className="text-white font-medium">youtube.com</span>에서 확장 아이콘을
-                  클릭하고 <span className="text-white font-medium">Export</span>를 누르면{" "}
-                  <code className="text-xs bg-gray-800 px-1 rounded">cookies.txt</code> 파일이
+                  <span className="text-white light:text-gray-900 font-medium">youtube.com</span>에서 확장 아이콘을
+                  클릭하고 <span className="text-white light:text-gray-900 font-medium">Export</span>를 누르면{" "}
+                  <code className="text-xs bg-gray-800 light:bg-gray-200 px-1 rounded">cookies.txt</code> 파일이
                   저장됩니다.
                 </>,
                 <>저장된 파일을 아래에 업로드하세요.</>,
@@ -511,13 +526,13 @@ export default function MusicDownloaderPage() {
                   <span className="shrink-0 w-5 h-5 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center font-bold">
                     {i + 1}
                   </span>
-                  <span className="text-gray-300">{content}</span>
+                  <span className="text-gray-300 light:text-gray-700">{content}</span>
                 </li>
               ))}
             </ol>
 
             {cookieError && (
-              <p className="text-xs text-red-400 bg-red-950 border border-red-800 rounded px-3 py-2">
+              <p className="text-xs text-red-400 bg-red-950 border border-red-800 light:text-red-600 light:bg-red-50 light:border-red-200 rounded px-3 py-2">
                 {cookieError}
               </p>
             )}
@@ -537,18 +552,18 @@ export default function MusicDownloaderPage() {
               }}
               className={`cursor-pointer rounded-lg border-2 border-dashed px-4 py-6 text-center transition-colors ${
                 cookieDragOver
-                  ? "border-indigo-400 bg-indigo-950"
-                  : "border-gray-600 hover:border-gray-500"
+                  ? "border-indigo-400 bg-indigo-950 light:bg-indigo-50"
+                  : "border-gray-600 hover:border-gray-500 light:border-gray-300 light:hover:border-gray-400"
               }`}
             >
               {cookieUploading ? (
-                <div className="flex items-center justify-center gap-2 text-sm text-gray-400">
+                <div className="flex items-center justify-center gap-2 text-sm text-gray-400 light:text-gray-600">
                   <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
                   업로드 중…
                 </div>
               ) : (
                 <>
-                  <p className="text-sm text-gray-300">
+                  <p className="text-sm text-gray-300 light:text-gray-700">
                     <span className="text-indigo-400 font-medium">cookies.txt</span> 파일을 여기에
                     끌어다 놓거나
                   </p>
@@ -574,7 +589,7 @@ export default function MusicDownloaderPage() {
       {/* 검색 입력 */}
       <form onSubmit={handleSearch} className="flex gap-2 mb-6">
         <input
-          className="flex-1 rounded-lg bg-gray-800 border border-gray-700 px-4 py-2 text-sm placeholder-gray-500 focus:outline-none focus:border-gray-500"
+          className="flex-1 rounded-lg bg-gray-800 border border-gray-700 light:bg-gray-100 light:border-gray-300 px-4 py-2 text-sm placeholder-gray-500 light:placeholder-gray-400 focus:outline-none focus:border-gray-500"
           placeholder="예: 아이유 - 좋은날  또는  https://youtu.be/..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -590,7 +605,7 @@ export default function MusicDownloaderPage() {
 
       {/* 검색 중 스피너 */}
       {isSearching && (
-        <div className="flex items-center gap-3 text-sm text-gray-400 mb-4">
+        <div className="flex items-center gap-3 text-sm text-gray-400 light:text-gray-600 mb-4">
           <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
           곡 정보 수집 중…
         </div>
@@ -598,15 +613,15 @@ export default function MusicDownloaderPage() {
 
       {/* 검색 오류 */}
       {searchStatus === "error" && (
-        <div className="rounded-lg bg-red-950 border border-red-800 p-4 text-sm text-red-300 mb-4">
+        <div className="rounded-lg bg-red-950 border border-red-800 light:bg-red-50 light:border-red-200 p-4 text-sm text-red-300 light:text-red-700 mb-4">
           {searchError}
         </div>
       )}
 
       {/* 검색 결과 목록 */}
       {searchStatus === "list" && (
-        <div className="rounded-xl border border-gray-700 bg-gray-900 overflow-hidden mb-4">
-          <p className="px-4 py-3 text-xs text-gray-500 border-b border-gray-800">
+        <div className="rounded-xl border border-gray-700 bg-gray-900 light:border-gray-200 light:bg-white overflow-hidden mb-4">
+          <p className="px-4 py-3 text-xs text-gray-500 border-b border-gray-800 light:border-gray-200">
             검색 결과 {searchResults.length}건 — 곡을 선택하세요
           </p>
           <ul>
@@ -615,24 +630,24 @@ export default function MusicDownloaderPage() {
                 <button
                   onClick={() => handleSelect(c)}
                   disabled={detailLoading}
-                  className="w-full flex items-center gap-3 px-4 py-3 text-left border-b border-gray-800 last:border-b-0 hover:bg-gray-800 disabled:opacity-50 transition-colors"
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left border-b border-gray-800 light:border-gray-200 last:border-b-0 hover:bg-gray-800 light:hover:bg-gray-50 disabled:opacity-50 transition-colors"
                 >
-                  <div className="w-11 h-11 rounded-md bg-gray-800 flex items-center justify-center shrink-0">
-                    <span className="text-xl text-gray-600">♪</span>
+                  <div className="w-11 h-11 rounded-md bg-gray-800 light:bg-gray-100 flex items-center justify-center shrink-0">
+                    <span className="text-xl text-gray-600 light:text-gray-400">♪</span>
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm text-gray-200 truncate">{c.title}</p>
+                    <p className="text-sm text-gray-200 light:text-gray-800 truncate">{c.title}</p>
                     <p className="text-xs text-gray-500 truncate">
                       {c.artist} · {c.album || "—"}
                     </p>
                   </div>
-                  <span className="text-xs text-gray-600 shrink-0">선택 →</span>
+                  <span className="text-xs text-gray-600 light:text-gray-400 shrink-0">선택 →</span>
                 </button>
               </li>
             ))}
           </ul>
           {detailLoading && (
-            <div className="flex items-center gap-3 px-4 py-3 text-sm text-gray-400 border-t border-gray-800">
+            <div className="flex items-center gap-3 px-4 py-3 text-sm text-gray-400 light:text-gray-600 border-t border-gray-800 light:border-gray-200">
               <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin shrink-0" />
               곡 정보 수집 중…
             </div>
@@ -643,7 +658,7 @@ export default function MusicDownloaderPage() {
       {/* 결과 카드 */}
       {showCard && (
         <div
-          className="rounded-xl border border-gray-700 bg-gray-900 overflow-hidden transition-opacity duration-300"
+          className="rounded-xl border border-gray-700 bg-gray-900 light:border-gray-200 light:bg-white overflow-hidden transition-opacity duration-300"
           style={{ opacity: cardVisible ? 1 : 0 }}
         >
           {/* URL 모드 */}
@@ -651,7 +666,7 @@ export default function MusicDownloaderPage() {
             <div className="p-5 space-y-4">
               <div>
                 <p className="text-xs text-gray-500 mb-1">YouTube URL</p>
-                <p className="text-sm font-mono text-indigo-300 break-all">{query}</p>
+                <p className="text-sm font-mono text-indigo-300 light:text-indigo-600 break-all">{query}</p>
               </div>
               <DownloadSection
                 status={downloadStatus}
@@ -675,7 +690,7 @@ export default function MusicDownloaderPage() {
               {/* 목록으로 */}
               <button
                 onClick={backToList}
-                className="px-5 py-3 text-xs text-gray-400 hover:text-gray-200 border-b border-gray-800 w-full text-left transition-colors"
+                className="px-5 py-3 text-xs text-gray-400 hover:text-gray-200 light:text-gray-600 light:hover:text-gray-900 border-b border-gray-800 light:border-gray-200 w-full text-left transition-colors"
               >
                 ← 검색 결과로 돌아가기
               </button>
@@ -690,13 +705,13 @@ export default function MusicDownloaderPage() {
                     className="w-24 h-24 rounded-lg shadow-lg object-cover shrink-0"
                   />
                 ) : (
-                  <div className="w-24 h-24 rounded-lg bg-gray-800 flex items-center justify-center shrink-0">
-                    <span className="text-3xl text-gray-600">♪</span>
+                  <div className="w-24 h-24 rounded-lg bg-gray-800 light:bg-gray-100 flex items-center justify-center shrink-0">
+                    <span className="text-3xl text-gray-600 light:text-gray-400">♪</span>
                   </div>
                 )}
                 <div className="min-w-0 space-y-1">
                   <p className="font-bold text-lg leading-tight">{searchResult.artist}</p>
-                  <p className="text-gray-200 text-base leading-tight">{searchResult.title}</p>
+                  <p className="text-gray-200 light:text-gray-800 text-base leading-tight">{searchResult.title}</p>
                   <p className="text-gray-500 text-xs">앨범: {searchResult.album || "—"}</p>
                   <p className="text-gray-500 text-xs">발매일: {searchResult.release_date || "—"}</p>
                   <p className="text-gray-500 text-xs">작곡: {searchResult.composer}</p>
@@ -704,13 +719,13 @@ export default function MusicDownloaderPage() {
                 </div>
               </div>
 
-              <div className="border-t border-gray-800" />
+              <div className="border-t border-gray-800 light:border-gray-200" />
 
               {/* 복사 1 */}
               <div className="flex items-center justify-between px-5 py-3 gap-4">
                 <div className="min-w-0">
                   <p className="text-xs text-gray-500 mb-0.5">📋 곡 정보</p>
-                  <p className="text-sm text-gray-300 truncate">
+                  <p className="text-sm text-gray-300 light:text-gray-700 truncate">
                     {searchResult.artist}의 &apos;{searchResult.album}&apos; (
                     {formatDateShort(searchResult.release_date)}) 수록곡
                   </p>
@@ -722,19 +737,19 @@ export default function MusicDownloaderPage() {
                       setCopied1
                     )
                   }
-                  className="shrink-0 rounded bg-gray-800 hover:bg-gray-700 px-3 py-1.5 text-xs font-medium transition-colors min-w-[62px] text-center"
+                  className="shrink-0 rounded bg-gray-800 hover:bg-gray-700 light:bg-gray-100 light:hover:bg-gray-200 px-3 py-1.5 text-xs font-medium transition-colors min-w-[62px] text-center"
                 >
                   {copied1 ? "복사됨 ✓" : "복사"}
                 </button>
               </div>
 
-              <div className="border-t border-gray-800" />
+              <div className="border-t border-gray-800 light:border-gray-200" />
 
               {/* 복사 2 */}
               <div className="flex items-start justify-between px-5 py-3 gap-4">
                 <div className="min-w-0">
                   <p className="text-xs text-gray-500 mb-0.5">📋 제작 정보</p>
-                  <p className="text-sm text-gray-300 whitespace-pre-line leading-relaxed">
+                  <p className="text-sm text-gray-300 light:text-gray-700 whitespace-pre-line leading-relaxed">
                     {`${searchResult.lyricist} 작사\n${searchResult.composer} 작곡\n${searchResult.artist} 노래`}
                   </p>
                 </div>
@@ -745,13 +760,13 @@ export default function MusicDownloaderPage() {
                       setCopied2
                     )
                   }
-                  className="shrink-0 rounded bg-gray-800 hover:bg-gray-700 px-3 py-1.5 text-xs font-medium transition-colors min-w-[62px] text-center"
+                  className="shrink-0 rounded bg-gray-800 hover:bg-gray-700 light:bg-gray-100 light:hover:bg-gray-200 px-3 py-1.5 text-xs font-medium transition-colors min-w-[62px] text-center"
                 >
                   {copied2 ? "복사됨 ✓" : "복사"}
                 </button>
               </div>
 
-              <div className="border-t border-gray-800" />
+              <div className="border-t border-gray-800 light:border-gray-200" />
 
               {/* 메타데이터 복사 */}
               <div className="px-5 py-3">
@@ -767,12 +782,12 @@ export default function MusicDownloaderPage() {
                     ] as { label: string; value: string; copied: boolean; setCopied: (v: boolean) => void }[]
                   ).map(({ label, value, copied, setCopied }) => (
                     <div key={label} className="flex items-center gap-3 py-0.5">
-                      <span className="text-xs text-gray-600 w-16 shrink-0">{label}</span>
-                      <span className="text-sm text-gray-300 flex-1 truncate min-w-0">{value || "—"}</span>
+                      <span className="text-xs text-gray-600 light:text-gray-500 w-16 shrink-0">{label}</span>
+                      <span className="text-sm text-gray-300 light:text-gray-700 flex-1 truncate min-w-0">{value || "—"}</span>
                       <button
                         onClick={() => value && copyText(value, setCopied)}
                         disabled={!value}
-                        className="shrink-0 rounded bg-gray-800 hover:bg-gray-700 disabled:opacity-40 px-2.5 py-1 text-xs font-medium transition-colors min-w-[52px] text-center"
+                        className="shrink-0 rounded bg-gray-800 hover:bg-gray-700 light:bg-gray-100 light:hover:bg-gray-200 disabled:opacity-40 px-2.5 py-1 text-xs font-medium transition-colors min-w-[52px] text-center"
                       >
                         {copied ? "복사됨 ✓" : "복사"}
                       </button>
@@ -781,7 +796,7 @@ export default function MusicDownloaderPage() {
                 </div>
               </div>
 
-              <div className="border-t border-gray-800" />
+              <div className="border-t border-gray-800 light:border-gray-200" />
 
               {/* 가사 */}
               <div className="px-5 py-3">
@@ -790,25 +805,25 @@ export default function MusicDownloaderPage() {
                     onClick={() => setLyricsOpen((v) => !v)}
                     className="flex items-center gap-2 text-left"
                   >
-                    <span className="text-sm text-gray-400">🎵 가사</span>
+                    <span className="text-sm text-gray-400 light:text-gray-600">🎵 가사</span>
                     <span className="text-xs text-gray-500">{lyricsOpen ? "접기 ▲" : "펼치기 ▼"}</span>
                   </button>
                   <button
                     onClick={() => searchResult.lyrics && copyText(searchResult.lyrics, setCopiedLyrics)}
                     disabled={!searchResult.lyrics}
-                    className="shrink-0 rounded bg-gray-800 hover:bg-gray-700 disabled:opacity-40 px-2.5 py-1 text-xs font-medium transition-colors min-w-[52px] text-center"
+                    className="shrink-0 rounded bg-gray-800 hover:bg-gray-700 light:bg-gray-100 light:hover:bg-gray-200 disabled:opacity-40 px-2.5 py-1 text-xs font-medium transition-colors min-w-[52px] text-center"
                   >
                     {copiedLyrics ? "복사됨 ✓" : "복사"}
                   </button>
                 </div>
                 {lyricsOpen && (
-                  <div className="mt-3 max-h-64 overflow-y-auto pr-1 text-sm text-gray-300 whitespace-pre-line leading-relaxed">
+                  <div className="mt-3 max-h-64 overflow-y-auto pr-1 text-sm text-gray-300 light:text-gray-700 whitespace-pre-line leading-relaxed">
                     {searchResult.lyrics}
                   </div>
                 )}
               </div>
 
-              <div className="border-t border-gray-800" />
+              <div className="border-t border-gray-800 light:border-gray-200" />
 
               {/* 다운로드 */}
               <div className="px-5 py-4">

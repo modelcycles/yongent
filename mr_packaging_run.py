@@ -1,7 +1,6 @@
 """
 mr-packaging 일괄 처리 스크립트
 - ffmpeg 2-pass loudnorm (-0.3dBTP) + 320kbps MP3 변환
-- 60초 샘플 생성 (192kbps, 55-60s 페이드아웃)
 - ID3v2: UTF-8 (mutagen, v1=0)
 - ID3v1: CP949 128바이트 수동 기록
 """
@@ -43,8 +42,8 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 def parse_filename(wav_path: Path):
     """
     파일명에서 아티스트와 제목 추출.
-    - 공백 제거
     - 첫 번째 '-' 기준으로 분리
+    - CLAUDE.md: 파일명 공백 유지 (치환하지 않음)
     """
     stem = wav_path.stem  # 확장자 제외
     if "-" not in stem:
@@ -55,7 +54,6 @@ def parse_filename(wav_path: Path):
     artist = stem[:idx].strip()
     title = stem[idx + 1:].strip()
 
-    # CLAUDE.md: 파일명 공백 유지 (치환하지 않음)
     return artist, title
 
 
@@ -103,24 +101,6 @@ def run_ffmpeg_pass2(input_wav: Path, output_mp3: Path, measured: dict) -> None:
     result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg pass2 실패:\n{result.stderr[-2000:]}")
-
-
-def make_60s_sample(input_mp3: Path, output_sample: Path) -> None:
-    """
-    60초 샘플 생성: 0~60s, 55~60s 페이드아웃, 192kbps
-    """
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", str(input_mp3),
-        "-ss", "0", "-t", "60",
-        "-af", "afade=t=out:st=55:d=5",
-        "-acodec", "libmp3lame",
-        "-b:a", "192k",
-        str(output_sample)
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if result.returncode != 0:
-        raise RuntimeError(f"샘플 생성 실패:\n{result.stderr[-2000:]}")
 
 
 def write_id3v2_tags(filepath: str, artist: str, title: str) -> None:
@@ -199,7 +179,6 @@ for wav in wav_files:
         continue
 
     output_mp3 = OUTPUT_DIR / f"{artist}-{title}.mp3"
-    output_sample = OUTPUT_DIR / f"s{artist}-{title}.mp3"
 
     try:
         # Step 1: 2-pass loudnorm + MP3 변환
@@ -209,32 +188,15 @@ for wav in wav_files:
         print(f"  → Pass 2: {MP3_BITRATE} MP3 변환 중...")
         run_ffmpeg_pass2(wav, output_mp3, measured)
 
-        # Step 2: 60초 샘플 ([악보바다MR]합창 아티스트는 샘플 생략)
-        skip_sample = (artist == "[악보바다MR]합창")
-        if skip_sample:
-            print(f"  → 60초 샘플 생략 ([악보바다MR]합창)")
-        else:
-            print(f"  → 60초 샘플 생성 중...")
-            make_60s_sample(output_mp3, output_sample)
-
-        # Step 3: ID3 태그 (메인)
+        # Step 2: ID3 태그
         write_id3v2_tags(str(output_mp3), artist, title)
         write_id3v1_cp949(str(output_mp3), title, artist)
-
-        # Step 4: ID3 태그 (샘플)
-        if not skip_sample:
-            write_id3v2_tags(str(output_sample), artist, title)
-            write_id3v1_cp949(str(output_sample), title, artist)
 
         print(f"  [OK] {wav.name}")
         print(f"    → 정규화: -0.3dBTP (loudnorm 2-pass)")
         print(f"    → 변환: {MP3_BITRATE} MP3")
-        if not skip_sample:
-            print(f"    → 샘플: 192kbps MP3 (0~60s, 55~60s 페이드아웃)")
         print(f"    → 태그: 아티스트={artist}, 제목={title}, 저작권={COPYRIGHT}, URL={URL}")
         print(f"    → 출력: {output_mp3}")
-        if not skip_sample:
-            print(f"    → 샘플 출력: {output_sample}")
         print()
         success_count += 1
 

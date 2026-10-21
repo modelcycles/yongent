@@ -3,7 +3,7 @@ uvicorn[standard]==0.30.1
 python-multipart==0.0.9
 python-dotenv
 httpx
-yt-dlp
+yt-dlp[default]
 ffmpeg-python
 beautifulsoup4
 lxml

@@ -33,17 +33,23 @@ def _cookie_opt() -> dict:
 def _base_opts() -> dict:
     """모든 yt-dlp 호출에 공통 적용할 옵션.
 
-    ios/android 클라이언트는 앱 API를 사용하므로
-    web 클라이언트의 봇 체크 문제("Only images are available")를 피할 수 있음.
+    - js_runtimes: 서명/n 챌린지 해제에 JS 런타임 필요 (yt-dlp-ejs + deno 또는 node).
+      없으면 "Requested format is not available" 발생.
+    - 쿠키 없음: ios/android 클라이언트(앱 API)로 web 봇 체크를 회피.
+    - 쿠키 있음: ios/android는 쿠키 미지원 → 연령 제한 영상이 막히므로
+      클라이언트 선택을 yt-dlp 기본값에 맡김.
     """
-    return {
+    opts: dict = {
         **_cookie_opt(),
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["ios", "android", "tv_embedded"],
-            }
-        },
+        "js_runtimes": {"deno": {}, "node": {}},
     }
+    if "cookiefile" not in opts:
+        opts["extractor_args"] = {
+            "youtube": {
+                "player_client": ["ios", "android"],
+            }
+        }
+    return opts
 
 
 # ─── 검색 점수 계산 ───────────────────────────────────────────────────────────

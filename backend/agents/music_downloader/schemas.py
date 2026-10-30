@@ -23,6 +23,18 @@ class DetailRequest(BaseModel):
     title: str
 
 
+class YoutubeCandidate(BaseModel):
+    video_id: str
+    url: str
+    title: str
+    channel: str
+    duration: int  # 초 (알 수 없으면 0)
+    thumbnail: str
+    score: int  # 적합도 점수 (0 미만 = 자동 선택 기준 탈락)
+    duration_diff: int | None = None  # 멜론 곡 길이 대비 차이(초)
+    recommended: bool = False
+
+
 class SearchResponse(BaseModel):
     artist: str
     title: str
@@ -32,7 +44,8 @@ class SearchResponse(BaseModel):
     lyrics: str
     composer: str
     lyricist: str
-    youtube_url: str
+    youtube_url: str  # 1순위 후보 URL (기본 선택값)
+    youtube_candidates: list[YoutubeCandidate] = []
 
 
 class DownloadRequest(BaseModel):

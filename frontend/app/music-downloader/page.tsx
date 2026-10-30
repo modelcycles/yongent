@@ -14,6 +14,19 @@ interface SearchResult {
   composer: string;
   lyricist: string;
   youtube_url: string;
+  youtube_candidates: YoutubeCandidate[];
+}
+
+interface YoutubeCandidate {
+  video_id: string;
+  url: string;
+  title: string;
+  channel: string;
+  duration: number;
+  thumbnail: string;
+  score: number;
+  duration_diff: number | null;
+  recommended: boolean;
 }
 
 interface SearchCandidate {
@@ -33,6 +46,180 @@ function formatDateShort(dateStr: string): string {
   return parts[0] || "";
 }
 
+function formatDuration(sec: number): string {
+  if (!sec) return "--:--";
+  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+}
+
+/** YouTube URL → 11자리 video id. 인식 불가 시 null. */
+function extractVideoId(url: string): string | null {
+  const m = url.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+
+// ─── 유튜브 영상 선택 섹션 ─────────────────────────────────────────────────
+
+interface YoutubePickerProps {
+  candidates: YoutubeCandidate[];
+  selectedId: string | null;
+  setSelectedId: (id: string) => void;
+  useCustom: boolean;
+  setUseCustom: (v: boolean) => void;
+  customUrl: string;
+  setCustomUrl: (v: string) => void;
+  disabled: boolean;
+}
+
+function YoutubePicker({
+  candidates,
+  selectedId,
+  setSelectedId,
+  useCustom,
+  setUseCustom,
+  customUrl,
+  setCustomUrl,
+  disabled,
+}: YoutubePickerProps) {
+  const customId = extractVideoId(customUrl);
+  const previewId = useCustom ? customId : selectedId;
+  const customInvalid = useCustom && customUrl.trim() !== "" && !customId;
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-gray-500">▶ 유튜브 영상 선택</p>
+
+      {candidates.length === 0 && (
+        <p className="text-sm text-yellow-500 light:text-yellow-600">
+          유튜브 검색 결과가 없습니다 — 아래에 링크를 직접 입력하세요.
+        </p>
+      )}
+
+      {candidates.length > 0 && (
+        <ul className="max-h-80 overflow-y-auto rounded-lg border border-gray-800 light:border-gray-200">
+          {candidates.map((c) => {
+            const checked = !useCustom && selectedId === c.video_id;
+            return (
+              <li key={c.video_id}>
+                <label
+                  className={`flex items-center gap-3 px-3 py-2 border-b border-gray-800 light:border-gray-200 last:border-b-0 cursor-pointer transition-colors ${
+                    checked
+                      ? "bg-indigo-950 light:bg-indigo-50"
+                      : "hover:bg-gray-800 light:hover:bg-gray-50"
+                  } ${c.score < 0 && !checked ? "opacity-50" : ""}`}
+                >
+                  <input
+                    type="radio"
+                    name="youtube-video"
+                    checked={checked}
+                    disabled={disabled}
+                    onChange={() => {
+                      setUseCustom(false);
+                      setSelectedId(c.video_id);
+                    }}
+                    className="shrink-0 accent-indigo-500"
+                  />
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={c.thumbnail}
+                    alt=""
+                    className="w-20 aspect-video rounded object-cover shrink-0 bg-gray-800 light:bg-gray-100"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm text-gray-200 light:text-gray-800 truncate" title={c.title}>
+                      {c.recommended && (
+                        <span className="mr-1.5 rounded bg-indigo-600 px-1.5 py-0.5 text-[10px] font-semibold text-white align-middle">
+                          추천
+                        </span>
+                      )}
+                      {c.title}
+                    </p>
+                    <p className="text-xs text-gray-500 truncate">
+                      {c.channel} · {formatDuration(c.duration)}
+                      {c.duration_diff !== null && (
+                        <span
+                          className={
+                            Math.abs(c.duration_diff) <= 5
+                              ? "text-green-500 light:text-green-600"
+                              : ""
+                          }
+                        >
+                          {" "}
+                          (멜론 대비 {c.duration_diff > 0 ? "+" : c.duration_diff < 0 ? "−" : "±"}
+                          {Math.abs(c.duration_diff)}초)
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {/* 직접 입력 */}
+      <div className="flex items-center gap-3">
+        <input
+          type="radio"
+          name="youtube-video"
+          checked={useCustom}
+          disabled={disabled}
+          onChange={() => setUseCustom(true)}
+          className="shrink-0 accent-indigo-500"
+          aria-label="링크 직접 입력"
+        />
+        <input
+          type="text"
+          placeholder="목록에 없으면 유튜브 링크 직접 입력 (https://youtu.be/...)"
+          value={customUrl}
+          disabled={disabled}
+          autoFocus={candidates.length === 0}
+          onFocus={() => setUseCustom(true)}
+          onChange={(e) => {
+            setUseCustom(true);
+            setCustomUrl(e.target.value);
+          }}
+          className={`flex-1 min-w-0 rounded-lg bg-gray-800 border light:bg-gray-100 px-3 py-2 text-sm placeholder-gray-600 light:placeholder-gray-400 focus:outline-none font-mono ${
+            customInvalid
+              ? "border-red-600 light:border-red-400"
+              : "border-gray-700 light:border-gray-300 focus:border-gray-500"
+          }`}
+        />
+      </div>
+      {customInvalid && (
+        <p className="text-xs text-red-400 light:text-red-600">올바른 유튜브 링크가 아닙니다.</p>
+      )}
+
+      {/* 미리듣기 */}
+      {previewId && (
+        <div className="space-y-1">
+          <div className="aspect-video w-full overflow-hidden rounded-lg bg-black">
+            <iframe
+              key={previewId}
+              src={`https://www.youtube.com/embed/${previewId}`}
+              title="미리듣기"
+              allow="encrypted-media; picture-in-picture"
+              allowFullScreen
+              className="h-full w-full"
+            />
+          </div>
+          <p className="text-xs text-gray-500">
+            재생이 막힌 영상은{" "}
+            <a
+              href={`https://www.youtube.com/watch?v=${previewId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-indigo-400 hover:underline"
+            >
+              유튜브에서 열기 ↗
+            </a>
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── 다운로드 버튼 섹션 ────────────────────────────────────────────────────
 
 interface DownloadSectionProps {
@@ -43,6 +230,7 @@ interface DownloadSectionProps {
   setSavePath: (v: string) => void;
   onDownload: (kind: "full" | "sample") => void;
   onSampleDownload: (() => void) | null;
+  disabled?: boolean;
 }
 
 function DownloadSection({
@@ -53,6 +241,7 @@ function DownloadSection({
   setSavePath,
   onDownload,
   onSampleDownload,
+  disabled = false,
 }: DownloadSectionProps) {
   if (status === "queued" || status === "running") {
     return (
@@ -85,21 +274,14 @@ function DownloadSection({
       </div>
     );
   }
-  if (status === "error") {
-    return (
-      <div className="space-y-2">
-        <p className="text-sm text-red-400 light:text-red-600">{error}</p>
-        <button
-          onClick={() => onDownload("full")}
-          className="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2.5 text-sm font-medium transition-colors"
-        >
-          ⬇ 다시 시도
-        </button>
-      </div>
-    );
-  }
+  // 오류 시에도 입력 폼을 그대로 보여줘 저장 경로를 고쳐 다시 시도할 수 있게 함
   return (
     <div className="space-y-3">
+      {status === "error" && (
+        <p className="text-sm text-red-400 light:text-red-600 break-all">
+          {error}
+        </p>
+      )}
       <div>
         <label className="text-xs text-gray-500 block mb-1">저장 폴더 경로</label>
         <input
@@ -113,13 +295,15 @@ function DownloadSection({
       <div className="flex gap-2">
         <button
           onClick={() => onDownload("full")}
-          className="flex-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2.5 text-sm font-semibold transition-colors"
+          disabled={disabled}
+          className="flex-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2.5 text-sm font-semibold transition-colors"
         >
           ⬇ 원본 다운로드
         </button>
         <button
           onClick={() => onDownload("sample")}
-          className="flex-1 rounded-lg bg-gray-800 hover:bg-gray-700 light:bg-gray-100 light:hover:bg-gray-200 px-4 py-2.5 text-sm font-semibold transition-colors"
+          disabled={disabled}
+          className="flex-1 rounded-lg bg-gray-800 hover:bg-gray-700 light:bg-gray-100 light:hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2.5 text-sm font-semibold transition-colors"
         >
           ⬇ 60초 샘플 다운로드
         </button>
@@ -152,6 +336,11 @@ export default function MusicDownloaderPage() {
   const [copiedLyrics, setCopiedLyrics] = useState(false);
   const [copiedComposer, setCopiedComposer] = useState(false);
   const [copiedLyricist, setCopiedLyricist] = useState(false);
+
+  // 유튜브 영상 선택
+  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
+  const [useCustomUrl, setUseCustomUrl] = useState(false);
+  const [customUrl, setCustomUrl] = useState("");
 
   // 다운로드
   const [downloadStatus, setDownloadStatus] = useState<DownloadStatus>("idle");
@@ -313,6 +502,7 @@ export default function MusicDownloaderPage() {
     setDownloadStatus("idle");
     setSampleDownloadUrl(null);
     setLyricsOpen(false);
+    resetVideoPick();
 
     // URL 직접 입력
     if (q.startsWith("http")) {
@@ -364,6 +554,11 @@ export default function MusicDownloaderPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail ?? "상세 정보 조회 실패");
+      const candidates: YoutubeCandidate[] = data.youtube_candidates ?? [];
+      // 적합도 1위 자동 선택, 후보가 없으면 링크 직접 입력 모드
+      setSelectedVideoId(candidates[0]?.video_id ?? null);
+      setUseCustomUrl(candidates.length === 0);
+      setCustomUrl("");
       setSearchResult(data);
       setSearchStatus("done");
     } catch (err) {
@@ -379,12 +574,32 @@ export default function MusicDownloaderPage() {
     setDownloadStatus("idle");
     setSampleDownloadUrl(null);
     setLyricsOpen(false);
+    resetVideoPick();
     setSearchStatus("list");
+  }
+
+  function resetVideoPick() {
+    setSelectedVideoId(null);
+    setUseCustomUrl(false);
+    setCustomUrl("");
+  }
+
+  /** 현재 선택된 영상 URL (직접 입력 링크가 올바르지 않으면 null). */
+  function selectedVideoUrl(): string | null {
+    const id = useCustomUrl ? extractVideoId(customUrl) : selectedVideoId;
+    return id ? `https://www.youtube.com/watch?v=${id}` : null;
   }
 
   // ─── 다운로드 시작 ──────────────────────────────────────────────────────
 
   async function handleDownload(kind: "full" | "sample") {
+    // 저장 경로에 URL을 넣는 실수는 서버에 보내기 전에 바로 알려줌
+    if (/^\s*[a-z][a-z0-9+.-]*:\/\//i.test(savePath)) {
+      setDownloadStatus("error");
+      setDownloadError("저장 폴더 경로에 URL이 입력되었습니다. 폴더 경로(예: C:\\Users\\이름\\Music)를 입력해주세요.");
+      return;
+    }
+
     downloadKindRef.current = kind;
     setDownloadStatus("queued");
     setDownloadStep("대기 중");
@@ -402,8 +617,8 @@ export default function MusicDownloaderPage() {
             query: searchResult
               ? `${searchResult.artist} - ${searchResult.title}`
               : q,
-            // /details에서 이미 찾은 영상을 그대로 사용 (백엔드 재검색 방지)
-            youtube_url: searchResult?.youtube_url || null,
+            // 사용자가 고른 영상 (백엔드 재검색 방지)
+            youtube_url: selectedVideoUrl(),
             save_dir: saveDir,
           };
 
@@ -825,9 +1040,26 @@ export default function MusicDownloaderPage() {
 
               <div className="border-t border-gray-800 light:border-gray-200" />
 
+              {/* 유튜브 영상 선택 */}
+              <div className="px-5 py-4">
+                <YoutubePicker
+                  candidates={searchResult.youtube_candidates ?? []}
+                  selectedId={selectedVideoId}
+                  setSelectedId={setSelectedVideoId}
+                  useCustom={useCustomUrl}
+                  setUseCustom={setUseCustomUrl}
+                  customUrl={customUrl}
+                  setCustomUrl={setCustomUrl}
+                  disabled={downloadStatus === "queued" || downloadStatus === "running"}
+                />
+              </div>
+
+              <div className="border-t border-gray-800 light:border-gray-200" />
+
               {/* 다운로드 */}
               <div className="px-5 py-4">
                 <DownloadSection
+                  disabled={!selectedVideoUrl()}
                   status={downloadStatus}
                   step={downloadStep}
                   error={downloadError}

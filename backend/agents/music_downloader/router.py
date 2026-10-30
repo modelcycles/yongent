@@ -11,7 +11,13 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from .downloader import COOKIES_FILE, _safe_filename, download_audio, search_youtube
+from .downloader import (
+    COOKIES_FILE,
+    _safe_filename,
+    download_audio,
+    search_youtube,
+    search_youtube_candidates,
+)
 from .metadata import collect_all_metadata, search_melon_candidates
 from .schemas import (
     DetailRequest,
@@ -21,6 +27,7 @@ from .schemas import (
     SearchListResponse,
     SearchRequest,
     SearchResponse,
+    YoutubeCandidate,
 )
 from .trimmer import make_60s_clip
 
@@ -147,16 +154,24 @@ async def details(req: DetailRequest):
     # 메타데이터 수집 (async)
     meta = await collect_all_metadata(req.artist, req.title, song_id=req.song_id)
 
-    # YouTube 검색 — blocking 이므로 thread pool에서 실행
+    # YouTube 후보 검색 — blocking 이므로 thread pool에서 실행
     search_q = f"{meta['artist']} {meta['title']} official audio"
-    youtube_url = await asyncio.to_thread(
-        lambda: search_youtube(
-            search_q,
-            artist=meta["artist"],
-            title=meta["title"],
-            ref_duration=meta.get("duration_sec", 0),
+    try:
+        candidates = await asyncio.to_thread(
+            lambda: search_youtube_candidates(
+                search_q,
+                artist=meta["artist"],
+                title=meta["title"],
+                ref_duration=meta.get("duration_sec", 0),
+            )
         )
-    ) or ""
+    except Exception:
+        # 검색 실패해도 메타데이터는 반환 (사용자가 링크 직접 입력 가능)
+        logger.exception("[Details] YouTube 후보 검색 실패")
+        candidates = []
+    if candidates and candidates[0]["score"] >= 0:
+        candidates[0]["recommended"] = True
+    youtube_url = candidates[0]["url"] if candidates else ""
 
     # 커버 아트 폴백: CAA/Deezer 모두 실패 시 YouTube 썸네일 사용
     cover_url = meta["cover_url"] or (
@@ -173,6 +188,7 @@ async def details(req: DetailRequest):
         composer=meta["composer"],
         lyricist=meta["lyricist"],
         youtube_url=youtube_url,
+        youtube_candidates=[YoutubeCandidate(**c) for c in candidates],
     )
 
 
@@ -181,6 +197,23 @@ async def download(req: DownloadRequest, background_tasks: BackgroundTasks):
     """비동기 다운로드 Job 생성. job_id로 상태 폴링."""
     if not req.query and not req.url:
         raise HTTPException(status_code=422, detail="query 또는 url 중 하나는 필수입니다")
+
+    # 저장 경로는 다운로드 전에 검증 — 잘못된 경로로 다운로드가 끝난 뒤에야 실패하지 않도록
+    if req.save_dir and req.save_dir.strip():
+        save_dir = req.save_dir.strip()
+        if "://" in save_dir:
+            raise HTTPException(
+                status_code=422,
+                detail="저장 폴더 경로에 URL이 입력되었습니다. 폴더 경로를 입력해주세요.",
+            )
+        try:
+            Path(save_dir).mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise HTTPException(
+                status_code=422,
+                detail=f"저장 폴더 경로가 올바르지 않습니다: {save_dir} ({e.strerror or e})",
+            )
+        req.save_dir = save_dir
 
     job_id = str(uuid.uuid4())[:8]
     jobs[job_id] = {"status": "queued", "step": "대기 중"}

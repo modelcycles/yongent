@@ -132,26 +132,58 @@ def _score_entry(entry: dict, artist: str, title: str, ref_duration: int = 0) ->
 # ─── 공개 API ────────────────────────────────────────────────────────────────
 
 
-def search_youtube(
-    query: str, artist: str = "", title: str = "", ref_duration: int = 0
-) -> str | None:
-    """YouTube 검색 → 적합도 점수가 가장 높은 URL 반환. 전부 미달이면 None."""
+def search_youtube_candidates(
+    query: str,
+    artist: str = "",
+    title: str = "",
+    ref_duration: int = 0,
+    limit: int = 10,
+) -> list[dict]:
+    """YouTube 검색 → 적합도 점수 내림차순 후보 목록 (탈락 후보 포함).
+
+    extract_flat으로 영상별 상세 추출 없이 검색 메타데이터만 가져옴.
+    """
     ydl_opts = {
         **_base_opts(),
         "quiet": True,
         "skip_download": True,
-        "noplaylist": True,
+        "extract_flat": "in_playlist",
         "socket_timeout": 30,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        results = ydl.extract_info(f"ytsearch10:{query}", download=False)
-        entries = (results or {}).get("entries") or []
-        if not entries:
-            return None
-        best = max(entries, key=lambda e: _score_entry(e, artist, title, ref_duration))
-        if _score_entry(best, artist, title, ref_duration) < _MIN_SCORE:
-            return None
-        return best.get("webpage_url")
+        results = ydl.extract_info(f"ytsearch{limit}:{query}", download=False)
+    entries = (results or {}).get("entries") or []
+
+    candidates: list[dict] = []
+    for e in entries:
+        video_id = e.get("id")
+        if not video_id:
+            continue
+        duration = int(e.get("duration") or 0)
+        candidates.append({
+            "video_id": video_id,
+            "url": f"https://www.youtube.com/watch?v={video_id}",
+            "title": e.get("title") or "",
+            "channel": e.get("channel") or e.get("uploader") or "",
+            "duration": duration,
+            "thumbnail": f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg",
+            "score": _score_entry(e, artist, title, ref_duration),
+            "duration_diff": (
+                duration - ref_duration if ref_duration > 0 and duration > 0 else None
+            ),
+        })
+    candidates.sort(key=lambda c: c["score"], reverse=True)
+    return candidates
+
+
+def search_youtube(
+    query: str, artist: str = "", title: str = "", ref_duration: int = 0
+) -> str | None:
+    """YouTube 검색 → 적합도 점수가 가장 높은 URL 반환. 전부 미달이면 None."""
+    candidates = search_youtube_candidates(query, artist, title, ref_duration)
+    if not candidates or candidates[0]["score"] < _MIN_SCORE:
+        return None
+    return candidates[0]["url"]
 
 
 def download_audio(url: str, output_dir: Path) -> Path:

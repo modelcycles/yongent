@@ -13,5 +13,6 @@
 - [60초 샘플 생성 중단](feedback_no_sample.md) — 2026-06-11부터 샘플 파일 생성 안 함, 메인 MP3만 출력
 
 ## 실행 환경 주의사항
-- [콘솔 출력 인코딩 깨짐](feedback_console_encoding.md) — Git Bash에서 한글 로그/태그 mojibake, 검증은 파일 경유 필수
+- [콘솔 출력 인코딩 깨짐](feedback_console_encoding.md) — Git Bash에서 한글 로그/태그 mojibake, 검증은 파일 경유 필수 (heredoc python도 PYTHONIOENCODING=utf-8 명시 필요)
 - [서브에이전트 결과 독립검증 필수](feedback_verify_subagent_output.md) — mr-packaging 서브에이전트 보고는 그대로 신뢰하지 말고 output_dir 파일시스템/ID3 태그를 직접 재확인할 것
+- [원본 WAV 절대 삭제 금지](feedback_never_delete_source.md) — 처리/검증 완료 후에도 watch_dir 원본 WAV를 임의로 rm 하지 말 것. 명시적 요청 없이 삭제한 사고 발생(2026-09-28)
